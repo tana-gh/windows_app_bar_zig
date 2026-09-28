@@ -15,6 +15,16 @@ The public API registers an AppBar with `ABM_NEW`, reserves its position with `A
 
 `monitor_index` is zero-based in the order reported by `EnumDisplayMonitors`. That order can change when the monitor configuration changes. The requested thickness must be greater than zero and no larger than the selected monitor dimension along the AppBar edge.
 
+## Basic example
+
+Run an empty AppBar window with a monitor index, edge, and thickness in pixels:
+
+```powershell
+zig build run -- 0 right 320
+```
+
+The edge must be `left`, `top`, `right`, or `bottom`. Press Ctrl+C in the terminal to remove the AppBar and exit the example.
+
 The library uses Zig declarations for the small Win32 surface it needs. They are verified against the Windows SDK and link to `Shell32.lib` and `User32.lib`; consumers do not need to configure C header imports.
 
 The intended usage is:
