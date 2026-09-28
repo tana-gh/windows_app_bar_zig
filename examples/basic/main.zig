@@ -147,7 +147,7 @@ fn run(args: std.process.Args) !void {
 
     var app_bar = try app_bar_lib.AppBar.register(
         window,
-        config.monitor_index,
+        config.monitor,
         config.edge,
         config.thickness,
     );
@@ -162,7 +162,7 @@ fn run(args: std.process.Args) !void {
 }
 
 const Config = struct {
-    monitor_index: u32,
+    monitor: app_bar_lib.MonitorSelector,
     edge: app_bar_lib.Edge,
     thickness: u32,
 };
@@ -186,7 +186,7 @@ fn parseArguments(args: std.process.Args) !Config {
     }
 
     return .{
-        .monitor_index = monitor_index,
+        .monitor = .{ .index = monitor_index },
         .edge = parseEdge(edge_text) orelse return usage(),
         .thickness = thickness,
     };

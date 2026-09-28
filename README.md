@@ -13,7 +13,9 @@ This project will provide a small, idiomatic interface for reserving an edge of 
 
 The public API registers an AppBar with `ABM_NEW`, reserves its position with `ABM_SETPOS`, moves the window with `SetWindowPos`, and removes the AppBar with `ABM_REMOVE`. It handles AppBar position-change notifications, `WM_WINDOWPOSCHANGED`, display-configuration changes, and DPI changes.
 
-`monitor_index` is zero-based in the order reported by `EnumDisplayMonitors`. The requested thickness must be greater than zero and no larger than the selected monitor dimension along the AppBar edge. Each position query rebuilds its candidate from the selected monitor rectangle, edge, and thickness; the shell-approved rectangle is retained separately.
+`MonitorSelector` selects a monitor by its zero-based `index` in `EnumDisplayMonitors` order or by its `id`. `enumerateMonitors(allocator)` returns `MonitorInfo` values in that order; free the returned slice with the same allocator. Monitor identifiers are owned, validated UTF-8 `MonitorId` values. Use an enumerated ID directly, or create one with `MonitorId.fromUtf8()` and read it with `utf8()`.
+
+The requested thickness must be greater than zero and no larger than the selected monitor dimension along the AppBar edge. Each position query rebuilds its candidate from the selected monitor rectangle, edge, and thickness; the shell-approved rectangle is retained separately. When registration uses a monitor ID, `preferredMonitorIndex()` returns the index of the monitor that ID resolved to; it is used as the fallback if that ID later disappears.
 
 `window()`, `edge()`, `preferredMonitorIndex()`, and `thickness()` expose the requested configuration. `proposedRect()` returns a fresh candidate rectangle, while `reservedRect()` returns the shell-approved rectangle only while the AppBar is registered. `Rect` values use screen coordinates in physical pixels.
 
@@ -27,7 +29,7 @@ The public API registers an AppBar with `ABM_NEW`, reserves its position with `A
 
 Call `reapply()` to explicitly re-query and reserve the current position after an application-level change. It also attempts to restore an AppBar that is temporarily suspended, except after a manual `unregister()`. Calling it after `cleanup()` returns `error.AppBarCleaned`.
 
-On `WM_DISPLAYCHANGE`, the library first tries to find the monitor previously selected by its device interface name. If it is absent, it falls back to the original `monitor_index`, then to monitor index `0`. If no monitor is available, the AppBar is unregistered without destroying the window and is automatically retried on the next display change.
+On `WM_DISPLAYCHANGE`, the library first tries to find the monitor previously selected by its device interface name. If it is absent, it falls back to the saved preferred monitor index, then to monitor index `0`. If no monitor is available, the AppBar is unregistered without destroying the window and is automatically retried on the next display change.
 
 `thickness` is always a physical-pixel value. On `WM_DPICHANGED`, the library keeps that thickness and re-queries, reserves, and positions the AppBar for the selected monitor. The application remains responsible for choosing its own DPI-awareness context; the library does not change process or thread DPI settings.
 
@@ -50,7 +52,7 @@ The library uses Zig declarations for the small Win32 surface it needs. They are
 The intended usage is:
 
 ```zig
-var app_bar = try AppBar.register(hwnd, monitor_index, .right, thickness);
+var app_bar = try AppBar.register(hwnd, .{ .index = monitor_index }, .right, thickness);
 defer app_bar.cleanup();
 
 // In the window procedure:

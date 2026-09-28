@@ -29,6 +29,62 @@ pub const Rect = struct {
     bottom: i32,
 };
 
+const max_monitor_id_utf16_units = 127;
+const max_monitor_id_utf8_bytes = max_monitor_id_utf16_units * 3;
+
+/// A UTF-8 Windows monitor device interface identifier.
+pub const MonitorId = struct {
+    bytes: [max_monitor_id_utf8_bytes]u8,
+    length: u16,
+
+    /// Creates a monitor identifier from a valid UTF-8 device interface identifier.
+    pub fn fromUtf8(value: []const u8) Error!MonitorId {
+        if (value.len == 0 or
+            value.len > max_monitor_id_utf8_bytes or
+            std.mem.indexOfScalar(u8, value, 0) != null or
+            !std.unicode.utf8ValidateSlice(value))
+        {
+            return error.InvalidMonitorId;
+        }
+
+        var utf16_length: usize = 0;
+        var codepoint_iterator = (std.unicode.Utf8View.init(value) catch return error.InvalidMonitorId).iterator();
+        while (codepoint_iterator.nextCodepoint()) |codepoint| {
+            utf16_length += std.unicode.utf16CodepointSequenceLength(codepoint) catch {
+                return error.InvalidMonitorId;
+            };
+        }
+        if (utf16_length > max_monitor_id_utf16_units) {
+            return error.InvalidMonitorId;
+        }
+
+        var monitor_id = MonitorId{
+            .bytes = undefined,
+            .length = @intCast(value.len),
+        };
+        @memcpy(monitor_id.bytes[0..value.len], value);
+        return monitor_id;
+    }
+
+    /// Returns the monitor device interface identifier as UTF-8.
+    pub fn utf8(self: *const MonitorId) []const u8 {
+        return self.bytes[0..self.length];
+    }
+};
+
+/// Selects a monitor by its current index or persistent device interface identifier.
+pub const MonitorSelector = union(enum) {
+    index: u32,
+    id: MonitorId,
+};
+
+/// Information about one monitor in EnumDisplayMonitors order.
+pub const MonitorInfo = struct {
+    index: u32,
+    id: ?MonitorId,
+    rect: Rect,
+};
+
 /// The AppBar registration lifecycle state.
 pub const Status = enum {
     active,
@@ -41,6 +97,7 @@ pub const Error = error{
     TaskbarCreatedMessageRegistrationFailed,
     AppBarRegistrationFailed,
     MonitorNotFound,
+    InvalidMonitorId,
     InvalidThickness,
     InvalidPlacementRect,
     WindowPlacementFailed,
@@ -68,11 +125,11 @@ pub const AppBar = struct {
     /// Registers an AppBar for a window.
     pub fn register(
         window_handle: WindowHandle,
-        monitor_index: u32,
+        monitor_selector: MonitorSelector,
         requested_edge: Edge,
         requested_thickness: u32,
     ) Error!AppBar {
-        const monitor = resolveMonitor(monitor_index, null) orelse return error.MonitorNotFound;
+        const monitor = resolveMonitorSelector(monitor_selector) orelse return error.MonitorNotFound;
         const proposed_rect = try makeProposedRect(monitor.rect, requested_edge, requested_thickness);
 
         const callback_message = win32.RegisterWindowMessageW(callback_message_name.ptr);
@@ -86,7 +143,7 @@ pub const AppBar = struct {
 
         var app_bar = AppBar{
             .window_handle = window_handle,
-            .preferred_monitor_index = monitor_index,
+            .preferred_monitor_index = monitor.index,
             .edge_value = requested_edge,
             .thickness_pixels = requested_thickness,
             .callback_message = callback_message,
@@ -544,20 +601,49 @@ fn makeAppBarData(window: WindowHandle, callback_message: Message) win32.APPBARD
     };
 }
 
-const MonitorId = [128]windows.WCHAR;
-
 const Monitor = struct {
+    index: u32,
     rect: win32.RECT,
     id: ?MonitorId,
 };
 
 const MonitorSearch = struct {
-    target: union(enum) {
-        index: u32,
-        id: MonitorId,
-    },
+    target: MonitorSelector,
+    next_index: u32 = 0,
     monitor: ?Monitor = null,
 };
+
+const MonitorEnumeration = struct {
+    monitors: *std.array_list.Managed(MonitorInfo),
+    next_index: u32 = 0,
+    allocation_failed: bool = false,
+};
+
+/// Enumerates monitors in the zero-based order used by MonitorSelector.index.
+/// The caller owns the returned slice and must free it with allocator.
+pub fn enumerateMonitors(allocator: std.mem.Allocator) std.mem.Allocator.Error![]MonitorInfo {
+    var monitors = std.array_list.Managed(MonitorInfo).init(allocator);
+    errdefer monitors.deinit();
+
+    var enumeration = MonitorEnumeration{ .monitors = &monitors };
+    _ = win32.EnumDisplayMonitors(
+        null,
+        null,
+        enumerateMonitorCallback,
+        @bitCast(@intFromPtr(&enumeration)),
+    );
+    if (enumeration.allocation_failed) {
+        return error.OutOfMemory;
+    }
+    return monitors.toOwnedSlice();
+}
+
+fn resolveMonitorSelector(selector: MonitorSelector) ?Monitor {
+    return switch (selector) {
+        .index => |index| resolveMonitor(index, null),
+        .id => |id| findMonitorById(id),
+    };
+}
 
 fn resolveMonitor(preferred_index: u32, previous_id: ?MonitorId) ?Monitor {
     if (previous_id) |id| {
@@ -597,18 +683,18 @@ fn findMonitorCallback(
     data: LParam,
 ) callconv(.winapi) std.os.windows.BOOL {
     const search: *MonitorSearch = @ptrFromInt(@as(usize, @bitCast(data)));
-    const monitor = Monitor{
-        .rect = monitor_rect.*,
-        .id = getMonitorId(monitor_handle),
-    };
+    if (search.next_index == std.math.maxInt(u32)) {
+        return .FALSE;
+    }
+    const monitor = monitorFromHandle(monitor_handle, monitor_rect.*, search.next_index);
+    search.next_index += 1;
 
     switch (search.target) {
-        .index => |*index| {
-            if (index.* == 0) {
+        .index => |index| {
+            if (monitor.index == index) {
                 search.monitor = monitor;
                 return .FALSE;
             }
-            index.* -= 1;
         },
         .id => |id| {
             if (monitor.id) |monitor_id| {
@@ -620,6 +706,37 @@ fn findMonitorCallback(
         },
     }
     return .TRUE;
+}
+
+fn enumerateMonitorCallback(
+    monitor_handle: win32.HMONITOR,
+    _: ?std.os.windows.HDC,
+    monitor_rect: *win32.RECT,
+    data: LParam,
+) callconv(.winapi) std.os.windows.BOOL {
+    const enumeration: *MonitorEnumeration = @ptrFromInt(@as(usize, @bitCast(data)));
+    if (enumeration.next_index == std.math.maxInt(u32)) {
+        return .FALSE;
+    }
+    const monitor = monitorFromHandle(monitor_handle, monitor_rect.*, enumeration.next_index);
+    enumeration.next_index += 1;
+    enumeration.monitors.append(.{
+        .index = monitor.index,
+        .id = monitor.id,
+        .rect = rectFromWin32(monitor.rect),
+    }) catch {
+        enumeration.allocation_failed = true;
+        return .FALSE;
+    };
+    return .TRUE;
+}
+
+fn monitorFromHandle(monitor_handle: win32.HMONITOR, rect: win32.RECT, index: u32) Monitor {
+    return .{
+        .index = index,
+        .rect = rect,
+        .id = getMonitorId(monitor_handle),
+    };
 }
 
 fn getMonitorId(monitor: win32.HMONITOR) ?MonitorId {
@@ -650,14 +767,25 @@ fn getMonitorId(monitor: win32.HMONITOR) ?MonitorId {
     ).toBool()) {
         return null;
     }
-    if (display_device.DeviceID[0] == 0) {
+    return monitorIdFromUtf16(&display_device.DeviceID);
+}
+
+fn monitorIdFromUtf16(utf16: []const windows.WCHAR) ?MonitorId {
+    const length = std.mem.indexOfScalar(windows.WCHAR, utf16, 0) orelse utf16.len;
+    if (length == 0) {
         return null;
     }
-    return display_device.DeviceID;
+
+    var bytes: [max_monitor_id_utf8_bytes]u8 = undefined;
+    const utf8_length = std.unicode.utf16LeToUtf8(bytes[0..], utf16[0..length]) catch return null;
+    return .{
+        .bytes = bytes,
+        .length = @intCast(utf8_length),
+    };
 }
 
 fn monitorIdsEqual(first: MonitorId, second: MonitorId) bool {
-    return std.mem.eql(windows.WCHAR, first[0..], second[0..]);
+    return std.mem.eql(u8, first.utf8(), second.utf8());
 }
 
 fn selectMonitorFromSlice(
@@ -841,6 +969,14 @@ test "Edge values match the Windows SDK" {
     try std.testing.expectEqual(win32.ABE_TOP, @intFromEnum(Edge.top));
     try std.testing.expectEqual(win32.ABE_RIGHT, @intFromEnum(Edge.right));
     try std.testing.expectEqual(win32.ABE_BOTTOM, @intFromEnum(Edge.bottom));
+}
+
+test "MonitorId stores valid UTF-8 monitor identifiers" {
+    const monitor_id = try MonitorId.fromUtf8("monitor-\u{1f5a5}");
+    try std.testing.expectEqualStrings("monitor-\u{1f5a5}", monitor_id.utf8());
+    try std.testing.expectError(error.InvalidMonitorId, MonitorId.fromUtf8(""));
+    try std.testing.expectError(error.InvalidMonitorId, MonitorId.fromUtf8("invalid\x00id"));
+    try std.testing.expectError(error.InvalidMonitorId, MonitorId.fromUtf8("\xff"));
 }
 
 test "APPBARDATA contains the ABM_NEW fields required by the Windows SDK" {
@@ -1120,17 +1256,16 @@ test "TaskbarCreated is consumed and resets only active AppBars" {
 }
 
 test "monitor selection prioritizes identity before index fallbacks" {
-    var first_id = [_]windows.WCHAR{0} ** 128;
-    first_id[0] = 1;
-    var second_id = [_]windows.WCHAR{0} ** 128;
-    second_id[0] = 2;
+    const first_id = try MonitorId.fromUtf8("first");
+    const second_id = try MonitorId.fromUtf8("second");
     const monitors = [_]Monitor{
-        .{ .rect = .{ .left = 0, .top = 0, .right = 100, .bottom = 100 }, .id = first_id },
-        .{ .rect = .{ .left = 100, .top = 0, .right = 200, .bottom = 100 }, .id = second_id },
+        .{ .index = 0, .rect = .{ .left = 0, .top = 0, .right = 100, .bottom = 100 }, .id = first_id },
+        .{ .index = 1, .rect = .{ .left = 100, .top = 0, .right = 200, .bottom = 100 }, .id = second_id },
     };
 
     const identity_match = selectMonitorFromSlice(&monitors, 0, second_id).?;
     try std.testing.expectEqual(@as(i32, 100), identity_match.rect.left);
+    try std.testing.expectEqual(@as(u32, 1), identity_match.index);
 
     const preferred_index_match = selectMonitorFromSlice(&monitors, 1, null).?;
     try std.testing.expectEqual(@as(i32, 100), preferred_index_match.rect.left);
