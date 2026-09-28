@@ -15,6 +15,18 @@ The public API registers an AppBar with `ABM_NEW`, reserves its position with `A
 
 `monitor_index` is zero-based in the order reported by `EnumDisplayMonitors`. The requested thickness must be greater than zero and no larger than the selected monitor dimension along the AppBar edge. Each position query rebuilds its candidate from the selected monitor rectangle, edge, and thickness; the shell-approved rectangle is retained separately.
 
+`window()`, `edge()`, `preferredMonitorIndex()`, and `thickness()` expose the requested configuration. `proposedRect()` returns a fresh candidate rectangle, while `reservedRect()` returns the shell-approved rectangle only while the AppBar is registered. `Rect` values use screen coordinates in physical pixels.
+
+`setEdge()`, `setPreferredMonitorIndex()`, and `setThickness()` immediately reapply the AppBar position. If applying a new setting fails, the library restores the previous setting and reservation; if that restoration fails, the setter returns `error.ConfigurationRollbackFailed`.
+
+`status()` returns `Status.active`, `Status.suspended`, or `Status.cleaned`. `isRegistered()` is true only while the AppBar is active and registered with the shell.
+
+`show()` and `hide()` change only the AppBar window's visibility; hiding it retains its reserved screen area. `show()` does not activate the window. `isVisible()` reports the current window visibility.
+
+`unregister()` removes the AppBar registration without destroying or hiding its window. It disables automatic re-registration caused by display changes or Explorer restart. `reregister()` enables automatic re-registration again and immediately registers the AppBar if it is currently unregistered. Calling `reregister()` after `cleanup()` returns `error.AppBarCleaned`.
+
+Call `reapply()` to explicitly re-query and reserve the current position after an application-level change. It also attempts to restore an AppBar that is temporarily suspended, except after a manual `unregister()`. Calling it after `cleanup()` returns `error.AppBarCleaned`.
+
 On `WM_DISPLAYCHANGE`, the library first tries to find the monitor previously selected by its device interface name. If it is absent, it falls back to the original `monitor_index`, then to monitor index `0`. If no monitor is available, the AppBar is unregistered without destroying the window and is automatically retried on the next display change.
 
 `thickness` is always a physical-pixel value. On `WM_DPICHANGED`, the library keeps that thickness and re-queries, reserves, and positions the AppBar for the selected monitor. The application remains responsible for choosing its own DPI-awareness context; the library does not change process or thread DPI settings.
