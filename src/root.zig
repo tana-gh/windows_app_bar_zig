@@ -21,7 +21,8 @@ pub const Edge = enum(std.os.windows.UINT) {
 };
 
 pub const Error = error{
-    NotImplemented,
+    CallbackMessageRegistrationFailed,
+    AppBarRegistrationFailed,
 };
 
 pub const AppBar = struct {
@@ -30,6 +31,7 @@ pub const AppBar = struct {
     edge: Edge,
     thickness: u32,
     callback_message: Message,
+    registered: bool,
 
     /// Registers an AppBar for a window.
     pub fn register(
@@ -38,16 +40,35 @@ pub const AppBar = struct {
         edge: Edge,
         thickness: u32,
     ) Error!AppBar {
-        _ = window;
-        _ = monitor_index;
-        _ = edge;
-        _ = thickness;
-        return error.NotImplemented;
+        const callback_message = win32.RegisterWindowMessageW(callback_message_name.ptr);
+        if (callback_message == 0) {
+            return error.CallbackMessageRegistrationFailed;
+        }
+
+        var app_bar_data = makeAppBarData(window, callback_message);
+        if (win32.SHAppBarMessage(win32.ABM_NEW, &app_bar_data) == 0) {
+            return error.AppBarRegistrationFailed;
+        }
+
+        return .{
+            .window = window,
+            .monitor_index = monitor_index,
+            .edge = edge,
+            .thickness = thickness,
+            .callback_message = callback_message,
+            .registered = true,
+        };
     }
 
-    /// Removes the AppBar registration when registration is implemented.
+    /// Removes the AppBar registration if it is active.
     pub fn cleanup(self: *AppBar) void {
-        _ = self;
+        if (!self.registered) {
+            return;
+        }
+
+        var app_bar_data = makeAppBarData(self.window, 0);
+        _ = win32.SHAppBarMessage(win32.ABM_REMOVE, &app_bar_data);
+        self.registered = false;
     }
 
     /// Handles a window message and reports whether it was consumed.
@@ -65,6 +86,26 @@ pub const AppBar = struct {
     }
 };
 
+const callback_message_name = std.unicode.utf8ToUtf16LeStringLiteral(
+    "windows_app_bar.AppBarCallback.v1",
+);
+
+fn makeAppBarData(window: WindowHandle, callback_message: Message) win32.APPBARDATA {
+    return .{
+        .cbSize = @sizeOf(win32.APPBARDATA),
+        .hWnd = window,
+        .uCallbackMessage = callback_message,
+        .uEdge = 0,
+        .rc = .{
+            .left = 0,
+            .top = 0,
+            .right = 0,
+            .bottom = 0,
+        },
+        .lParam = 0,
+    };
+}
+
 test "Edge values match the Windows SDK" {
     try std.testing.expectEqual(win32.ABE_LEFT, @intFromEnum(Edge.left));
     try std.testing.expectEqual(win32.ABE_TOP, @intFromEnum(Edge.top));
@@ -72,7 +113,12 @@ test "Edge values match the Windows SDK" {
     try std.testing.expectEqual(win32.ABE_BOTTOM, @intFromEnum(Edge.bottom));
 }
 
-test "register has the documented error contract before implementation" {
+test "APPBARDATA contains the ABM_NEW fields required by the Windows SDK" {
     const window: WindowHandle = @ptrFromInt(1);
-    try std.testing.expectError(error.NotImplemented, AppBar.register(window, 0, .right, 320));
+    const callback_message: Message = 0xc000;
+    const app_bar_data = makeAppBarData(window, callback_message);
+
+    try std.testing.expectEqual(@as(u32, @sizeOf(win32.APPBARDATA)), app_bar_data.cbSize);
+    try std.testing.expectEqual(window, app_bar_data.hWnd);
+    try std.testing.expectEqual(callback_message, app_bar_data.uCallbackMessage);
 }
