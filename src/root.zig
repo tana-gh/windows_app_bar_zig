@@ -159,6 +159,7 @@ pub const AppBar = struct {
                 };
                 return true;
             },
+            .state_changed => return self.state == .active,
             .callback => return self.state == .active,
         }
     }
@@ -481,6 +482,7 @@ const MessageAction = enum {
     activation_changed,
     window_position_changed,
     position_changed,
+    state_changed,
     callback,
 };
 
@@ -494,7 +496,11 @@ fn messageAction(
         return .taskbar_created;
     }
     if (message == callback_message) {
-        return if (wparam == win32.ABN_POSCHANGED) .position_changed else .callback;
+        return switch (wparam) {
+            win32.ABN_POSCHANGED => .position_changed,
+            win32.ABN_STATECHANGE => .state_changed,
+            else => .callback,
+        };
     }
     if (message == win32.WM_WINDOWPOSCHANGED) {
         return .window_position_changed;
@@ -628,7 +634,11 @@ test "AppBar callback messages are consumed" {
     );
     try std.testing.expectEqual(
         MessageAction.callback,
-        messageAction(callback_message, 0xc001, callback_message, 0),
+        messageAction(callback_message, 0xc001, callback_message, 4),
+    );
+    try std.testing.expectEqual(
+        MessageAction.state_changed,
+        messageAction(callback_message, 0xc001, callback_message, win32.ABN_STATECHANGE),
     );
 }
 

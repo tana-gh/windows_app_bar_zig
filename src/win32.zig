@@ -49,6 +49,7 @@ pub const ABM_SETPOS: windows.DWORD = 0x00000003;
 pub const ABM_ACTIVATE: windows.DWORD = 0x00000006;
 pub const ABM_WINDOWPOSCHANGED: windows.DWORD = 0x00000009;
 
+pub const ABN_STATECHANGE: usize = 0x00000000;
 pub const ABN_POSCHANGED: usize = 0x00000001;
 
 pub const ABE_LEFT: windows.UINT = 0;

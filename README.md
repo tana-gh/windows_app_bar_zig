@@ -21,7 +21,7 @@ On `WM_DISPLAYCHANGE`, the library first tries to find the monitor previously se
 
 When the AppBar window is moved or resized, `WM_WINDOWPOSCHANGED` causes the library to reapply the selected monitor, edge, and thickness. Repositioning is guarded against recursive window-position messages.
 
-Explorer restart recovery is implemented through the `TaskbarCreated` message. `WM_ACTIVATE` is forwarded to the shell through `ABM_ACTIVATE` without consuming the window message. Fullscreen and window-arrangement notifications are not implemented yet.
+Explorer restart recovery is implemented through the `TaskbarCreated` message. `WM_ACTIVATE` is forwarded to the shell through `ABM_ACTIVATE` without consuming the window message. `ABN_STATECHANGE` is consumed, but does not currently trigger repositioning or expose the taskbar state. Fullscreen and window-arrangement notifications are not implemented yet.
 
 ## Basic example
 
