@@ -52,6 +52,7 @@ pub const ABM_WINDOWPOSCHANGED: windows.DWORD = 0x00000009;
 pub const ABN_STATECHANGE: usize = 0x00000000;
 pub const ABN_POSCHANGED: usize = 0x00000001;
 pub const ABN_FULLSCREENAPP: usize = 0x00000002;
+pub const ABN_WINDOWARRANGE: usize = 0x00000003;
 
 pub const ABE_LEFT: windows.UINT = 0;
 pub const ABE_TOP: windows.UINT = 1;
@@ -62,6 +63,9 @@ pub const SWP_NOZORDER: windows.UINT = 0x0004;
 pub const SWP_NOACTIVATE: windows.UINT = 0x0010;
 pub const SWP_NOSIZE: windows.UINT = 0x0001;
 pub const SWP_NOMOVE: windows.UINT = 0x0002;
+
+pub const SW_HIDE: i32 = 0;
+pub const SW_SHOWNOACTIVATE: i32 = 4;
 
 pub const HWND_BOTTOM: windows.HWND = @ptrFromInt(1);
 
@@ -110,6 +114,15 @@ pub extern "user32" fn SetWindowPos(
     width: i32,
     height: i32,
     flags: windows.UINT,
+) callconv(.winapi) windows.BOOL;
+
+pub extern "user32" fn IsWindowVisible(
+    window: windows.HWND,
+) callconv(.winapi) windows.BOOL;
+
+pub extern "user32" fn ShowWindow(
+    window: windows.HWND,
+    command: i32,
 ) callconv(.winapi) windows.BOOL;
 
 test "APPBARDATA ABI matches the Windows SDK" {

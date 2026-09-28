@@ -43,6 +43,7 @@ pub const AppBar = struct {
     monitor_id: ?MonitorId,
     window_dpi: u32,
     is_repositioning: bool,
+    is_hidden_for_window_arrange: bool,
     state: State,
 
     /// Registers an AppBar for a window.
@@ -75,6 +76,7 @@ pub const AppBar = struct {
             .monitor_id = monitor.id,
             .window_dpi = 0,
             .is_repositioning = false,
+            .is_hidden_for_window_arrange = false,
             .state = .suspended,
         };
         errdefer app_bar.cleanup();
@@ -84,6 +86,7 @@ pub const AppBar = struct {
 
     /// Removes the AppBar registration if it is active.
     pub fn cleanup(self: *AppBar) void {
+        self.restoreWindowAfterArrange();
         self.unregister();
         self.state = .cleaned;
     }
@@ -138,6 +141,9 @@ pub const AppBar = struct {
                 if (self.state != .active) {
                     return false;
                 }
+                if (self.is_hidden_for_window_arrange) {
+                    return false;
+                }
                 var app_bar_data = makeAppBarData(self.window, 0);
                 _ = win32.SHAppBarMessage(win32.ABM_WINDOWPOSCHANGED, &app_bar_data);
                 if (shouldRepositionForWindowPositionChange(self.is_repositioning)) {
@@ -164,6 +170,13 @@ pub const AppBar = struct {
                     return false;
                 }
                 try self.setFullscreenZOrder(fullscreenAppIsOpening(lparam));
+                return true;
+            },
+            .window_arrange => {
+                if (self.state != .active) {
+                    return false;
+                }
+                self.handleWindowArrange(windowArrangeIsBeginning(lparam));
                 return true;
             },
             .callback => return self.state == .active,
@@ -246,6 +259,28 @@ pub const AppBar = struct {
         if (!win32.SetWindowPos(self.window, insert_after, 0, 0, 0, 0, flags).toBool()) {
             return error.WindowZOrderFailed;
         }
+    }
+
+    fn handleWindowArrange(self: *AppBar, is_beginning: bool) void {
+        if (is_beginning) {
+            if (shouldHideForWindowArrange(
+                self.is_hidden_for_window_arrange,
+                win32.IsWindowVisible(self.window).toBool(),
+            )) {
+                _ = win32.ShowWindow(self.window, win32.SW_HIDE);
+                self.is_hidden_for_window_arrange = true;
+            }
+            return;
+        }
+        self.restoreWindowAfterArrange();
+    }
+
+    fn restoreWindowAfterArrange(self: *AppBar) void {
+        if (!shouldShowAfterWindowArrange(self.is_hidden_for_window_arrange)) {
+            return;
+        }
+        self.is_hidden_for_window_arrange = false;
+        _ = win32.ShowWindow(self.window, win32.SW_SHOWNOACTIVATE);
     }
 
     fn applyPosition(self: *AppBar) Error!void {
@@ -498,6 +533,7 @@ const MessageAction = enum {
     position_changed,
     state_changed,
     fullscreen_app,
+    window_arrange,
     callback,
 };
 
@@ -515,6 +551,7 @@ fn messageAction(
             win32.ABN_POSCHANGED => .position_changed,
             win32.ABN_STATECHANGE => .state_changed,
             win32.ABN_FULLSCREENAPP => .fullscreen_app,
+            win32.ABN_WINDOWARRANGE => .window_arrange,
             else => .callback,
         };
     }
@@ -554,6 +591,18 @@ fn appBarActivationLParam(is_active: bool) LParam {
 
 fn fullscreenAppIsOpening(lparam: LParam) bool {
     return lparam != 0;
+}
+
+fn windowArrangeIsBeginning(lparam: LParam) bool {
+    return lparam != 0;
+}
+
+fn shouldHideForWindowArrange(is_hidden_for_window_arrange: bool, is_window_visible: bool) bool {
+    return !is_hidden_for_window_arrange and is_window_visible;
+}
+
+fn shouldShowAfterWindowArrange(is_hidden_for_window_arrange: bool) bool {
+    return is_hidden_for_window_arrange;
 }
 
 fn windowPositionFromRect(rect: win32.RECT) Error!WindowPosition {
@@ -664,6 +713,10 @@ test "AppBar callback messages are consumed" {
         MessageAction.fullscreen_app,
         messageAction(callback_message, 0xc001, callback_message, win32.ABN_FULLSCREENAPP),
     );
+    try std.testing.expectEqual(
+        MessageAction.window_arrange,
+        messageAction(callback_message, 0xc001, callback_message, win32.ABN_WINDOWARRANGE),
+    );
 }
 
 test "window position changes are forwarded without being consumed" {
@@ -702,6 +755,16 @@ test "activation changes are forwarded and report the active state" {
 test "fullscreen AppBar notifications use the lParam opening flag" {
     try std.testing.expect(fullscreenAppIsOpening(1));
     try std.testing.expect(!fullscreenAppIsOpening(0));
+}
+
+test "window arrangement hides and restores only windows hidden by the AppBar" {
+    try std.testing.expect(windowArrangeIsBeginning(1));
+    try std.testing.expect(!windowArrangeIsBeginning(0));
+    try std.testing.expect(shouldHideForWindowArrange(false, true));
+    try std.testing.expect(!shouldHideForWindowArrange(false, false));
+    try std.testing.expect(!shouldHideForWindowArrange(true, true));
+    try std.testing.expect(shouldShowAfterWindowArrange(true));
+    try std.testing.expect(!shouldShowAfterWindowArrange(false));
 }
 
 test "TaskbarCreated is consumed and resets only active AppBars" {
