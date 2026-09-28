@@ -26,10 +26,10 @@ pub fn build(b: *std.Build) void {
     });
     basic.root_module.addImport("windows_app_bar", mod);
 
-    const run_basic = b.addRunArtifact(basic);
+    const run_example_basic = b.addRunArtifact(basic);
     if (b.args) |args| {
-        run_basic.addArgs(args);
+        run_example_basic.addArgs(args);
     }
-    const run_step = b.step("run", "Run the basic AppBar example");
-    run_step.dependOn(&run_basic.step);
+    const run_example_basic_step = b.step("example-basic", "Run the basic AppBar example");
+    run_example_basic_step.dependOn(&run_example_basic.step);
 }

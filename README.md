@@ -42,7 +42,7 @@ Explorer restart recovery is implemented through the `TaskbarCreated` message. `
 Run an empty AppBar window with a monitor index, edge, and thickness in pixels:
 
 ```powershell
-zig build run -- 0 right 320
+zig build example-basic -- 0 right 320
 ```
 
 The edge must be `left`, `top`, `right`, or `bottom`. Press Ctrl+C in the terminal to remove the AppBar and exit the example.
