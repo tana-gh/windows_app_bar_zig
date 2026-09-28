@@ -39,6 +39,7 @@ pub const AppBar = struct {
     thickness: u32,
     callback_message: Message,
     taskbar_created_message: Message,
+    monitor_rect: win32.RECT,
     placement_rect: win32.RECT,
     monitor_id: ?MonitorId,
     window_dpi: u32,
@@ -72,6 +73,7 @@ pub const AppBar = struct {
             .thickness = thickness,
             .callback_message = callback_message,
             .taskbar_created_message = taskbar_created_message,
+            .monitor_rect = monitor.rect,
             .placement_rect = proposed_rect,
             .monitor_id = monitor.id,
             .window_dpi = 0,
@@ -141,17 +143,15 @@ pub const AppBar = struct {
                 if (self.state != .active) {
                     return false;
                 }
-                if (self.is_hidden_for_window_arrange) {
+                if (self.is_hidden_for_window_arrange or self.is_repositioning) {
                     return false;
                 }
                 var app_bar_data = makeAppBarData(self.window, 0);
                 _ = win32.SHAppBarMessage(win32.ABM_WINDOWPOSCHANGED, &app_bar_data);
-                if (shouldRepositionForWindowPositionChange(self.is_repositioning)) {
-                    self.refreshDisplayConfiguration() catch |err| {
-                        self.unregister();
-                        return err;
-                    };
-                }
+                self.refreshDisplayConfiguration() catch |err| {
+                    self.unregister();
+                    return err;
+                };
                 return false;
             },
             .position_changed => {
@@ -164,7 +164,16 @@ pub const AppBar = struct {
                 };
                 return true;
             },
-            .state_changed => return self.state == .active,
+            .state_changed => {
+                if (!shouldRepositionForStateChange(self.state)) {
+                    return false;
+                }
+                self.reposition() catch |err| {
+                    self.unregister();
+                    return err;
+                };
+                return true;
+            },
             .fullscreen_app => {
                 if (self.state != .active) {
                     return false;
@@ -208,13 +217,8 @@ pub const AppBar = struct {
             self.unregister();
             return;
         };
-        const proposed_rect = makeProposedRect(monitor.rect, self.edge, self.thickness) catch |err| {
-            self.unregister();
-            return err;
-        };
-
         self.monitor_id = monitor.id;
-        self.placement_rect = proposed_rect;
+        self.monitor_rect = monitor.rect;
         if (self.state == .suspended) {
             try self.activate();
             return;
@@ -235,14 +239,15 @@ pub const AppBar = struct {
         }
         self.is_repositioning = true;
         defer self.is_repositioning = false;
-        self.queryPosition();
+        const proposed_rect = try makeProposedRect(self.monitor_rect, self.edge, self.thickness);
+        self.queryPosition(proposed_rect);
         try self.applyPosition();
     }
 
-    fn queryPosition(self: *AppBar) void {
+    fn queryPosition(self: *AppBar, proposed_rect: win32.RECT) void {
         var app_bar_data = makeAppBarData(self.window, self.callback_message);
         app_bar_data.uEdge = @intFromEnum(self.edge);
-        app_bar_data.rc = self.placement_rect;
+        app_bar_data.rc = proposed_rect;
         _ = win32.SHAppBarMessage(win32.ABM_QUERYPOS, &app_bar_data);
         self.placement_rect = preserveThickness(app_bar_data.rc, self.edge, self.thickness);
     }
@@ -581,8 +586,8 @@ fn dpiFromWParam(wparam: WParam) u32 {
     return @intCast((wparam >> 16) & 0xffff);
 }
 
-fn shouldRepositionForWindowPositionChange(is_repositioning: bool) bool {
-    return !is_repositioning;
+fn shouldRepositionForStateChange(state: State) bool {
+    return state == .active;
 }
 
 fn appBarActivationLParam(is_active: bool) LParam {
@@ -656,6 +661,26 @@ test "proposed rectangles preserve the requested thickness on every edge" {
 
     const bottom = try makeProposedRect(monitor_rect, .bottom, 100);
     try std.testing.expectEqual(@as(i32, 550), bottom.top);
+}
+
+test "position queries rebuild candidates from the monitor edge" {
+    const monitor_rect = win32.RECT{
+        .left = 0,
+        .top = 0,
+        .right = 1000,
+        .bottom = 1000,
+    };
+    const previous_approved_rect = win32.RECT{
+        .left = 0,
+        .top = 860,
+        .right = 1000,
+        .bottom = 960,
+    };
+
+    const candidate = try makeProposedRect(monitor_rect, .bottom, 100);
+    try std.testing.expect(candidate.top != previous_approved_rect.top);
+    try std.testing.expectEqual(@as(i32, 900), candidate.top);
+    try std.testing.expectEqual(@as(i32, 1000), candidate.bottom);
 }
 
 test "thickness must fit the selected monitor edge" {
@@ -752,6 +777,12 @@ test "activation changes are forwarded and report the active state" {
     try std.testing.expectEqual(@as(LParam, 1), appBarActivationLParam(true));
 }
 
+test "taskbar state changes reconfigure active AppBars" {
+    try std.testing.expect(shouldRepositionForStateChange(.active));
+    try std.testing.expect(!shouldRepositionForStateChange(.suspended));
+    try std.testing.expect(!shouldRepositionForStateChange(.cleaned));
+}
+
 test "fullscreen AppBar notifications use the lParam opening flag" {
     try std.testing.expect(fullscreenAppIsOpening(1));
     try std.testing.expect(!fullscreenAppIsOpening(0));
@@ -775,11 +806,6 @@ test "TaskbarCreated is consumed and resets only active AppBars" {
     try std.testing.expectEqual(State.suspended, stateAfterTaskbarRestart(.active));
     try std.testing.expectEqual(State.suspended, stateAfterTaskbarRestart(.suspended));
     try std.testing.expectEqual(State.cleaned, stateAfterTaskbarRestart(.cleaned));
-}
-
-test "window position changes do not reenter AppBar repositioning" {
-    try std.testing.expect(shouldRepositionForWindowPositionChange(false));
-    try std.testing.expect(!shouldRepositionForWindowPositionChange(true));
 }
 
 test "monitor selection prioritizes identity before index fallbacks" {

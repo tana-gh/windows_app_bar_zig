@@ -42,6 +42,7 @@ const WS_POPUP: windows.DWORD = 0x80000000;
 const CW_USEDEFAULT: i32 = @bitCast(@as(u32, 0x80000000));
 const SW_SHOW: i32 = 5;
 const COLOR_WINDOW: usize = 5;
+const IDC_ARROW: windows.LPCWSTR = @ptrFromInt(32512);
 const WM_CLOSE: windows.UINT = 0x0010;
 const WM_DESTROY: windows.UINT = 0x0002;
 const WM_QUIT: windows.UINT = 0x0012;
@@ -49,6 +50,7 @@ const WM_QUIT: windows.UINT = 0x0012;
 const Error = error{
     InvalidArguments,
     WindowClassRegistrationFailed,
+    CursorLoadFailed,
     WindowCreationFailed,
     ConsoleHandlerRegistrationFailed,
     MessageLoopFailed,
@@ -65,6 +67,10 @@ extern "kernel32" fn SetConsoleCtrlHandler(
 ) callconv(.winapi) windows.BOOL;
 
 extern "user32" fn RegisterClassExW(window_class: *const WNDCLASSEXW) callconv(.winapi) windows.ATOM;
+extern "user32" fn LoadCursorW(
+    instance: ?windows.HINSTANCE,
+    cursor_name: windows.LPCWSTR,
+) callconv(.winapi) ?windows.HCURSOR;
 extern "user32" fn CreateWindowExW(
     extended_style: windows.DWORD,
     class_name: windows.LPCWSTR,
@@ -203,6 +209,7 @@ fn usage() Error {
 }
 
 fn registerWindowClass(instance: windows.HINSTANCE) Error!void {
+    const cursor = LoadCursorW(null, IDC_ARROW) orelse return error.CursorLoadFailed;
     const window_class = WNDCLASSEXW{
         .cbSize = @sizeOf(WNDCLASSEXW),
         .style = 0,
@@ -211,7 +218,7 @@ fn registerWindowClass(instance: windows.HINSTANCE) Error!void {
         .window_extra = 0,
         .instance = instance,
         .icon = null,
-        .cursor = null,
+        .cursor = cursor,
         .background_brush = @ptrFromInt(COLOR_WINDOW + 1),
         .menu_name = null,
         .class_name = window_class_name.ptr,
