@@ -29,6 +29,7 @@ pub const Error = error{
     InvalidThickness,
     InvalidPlacementRect,
     WindowPlacementFailed,
+    WindowZOrderFailed,
 };
 
 pub const AppBar = struct {
@@ -94,8 +95,6 @@ pub const AppBar = struct {
         wparam: WParam,
         lparam: LParam,
     ) Error!bool {
-        _ = lparam;
-
         switch (messageAction(self.callback_message, self.taskbar_created_message, message, wparam)) {
             .none => return false,
             .taskbar_created => {
@@ -160,6 +159,13 @@ pub const AppBar = struct {
                 return true;
             },
             .state_changed => return self.state == .active,
+            .fullscreen_app => {
+                if (self.state != .active) {
+                    return false;
+                }
+                try self.setFullscreenZOrder(fullscreenAppIsOpening(lparam));
+                return true;
+            },
             .callback => return self.state == .active,
         }
     }
@@ -232,6 +238,14 @@ pub const AppBar = struct {
         var app_bar_data = makeAppBarData(self.window, 0);
         app_bar_data.lParam = appBarActivationLParam(is_active);
         _ = win32.SHAppBarMessage(win32.ABM_ACTIVATE, &app_bar_data);
+    }
+
+    fn setFullscreenZOrder(self: *AppBar, is_opening: bool) Error!void {
+        const insert_after: ?WindowHandle = if (is_opening) win32.HWND_BOTTOM else null;
+        const flags = win32.SWP_NOMOVE | win32.SWP_NOSIZE | win32.SWP_NOACTIVATE;
+        if (!win32.SetWindowPos(self.window, insert_after, 0, 0, 0, 0, flags).toBool()) {
+            return error.WindowZOrderFailed;
+        }
     }
 
     fn applyPosition(self: *AppBar) Error!void {
@@ -483,6 +497,7 @@ const MessageAction = enum {
     window_position_changed,
     position_changed,
     state_changed,
+    fullscreen_app,
     callback,
 };
 
@@ -499,6 +514,7 @@ fn messageAction(
         return switch (wparam) {
             win32.ABN_POSCHANGED => .position_changed,
             win32.ABN_STATECHANGE => .state_changed,
+            win32.ABN_FULLSCREENAPP => .fullscreen_app,
             else => .callback,
         };
     }
@@ -534,6 +550,10 @@ fn shouldRepositionForWindowPositionChange(is_repositioning: bool) bool {
 
 fn appBarActivationLParam(is_active: bool) LParam {
     return @intFromBool(is_active);
+}
+
+fn fullscreenAppIsOpening(lparam: LParam) bool {
+    return lparam != 0;
 }
 
 fn windowPositionFromRect(rect: win32.RECT) Error!WindowPosition {
@@ -640,6 +660,10 @@ test "AppBar callback messages are consumed" {
         MessageAction.state_changed,
         messageAction(callback_message, 0xc001, callback_message, win32.ABN_STATECHANGE),
     );
+    try std.testing.expectEqual(
+        MessageAction.fullscreen_app,
+        messageAction(callback_message, 0xc001, callback_message, win32.ABN_FULLSCREENAPP),
+    );
 }
 
 test "window position changes are forwarded without being consumed" {
@@ -673,6 +697,11 @@ test "activation changes are forwarded and report the active state" {
     );
     try std.testing.expectEqual(@as(LParam, 0), appBarActivationLParam(false));
     try std.testing.expectEqual(@as(LParam, 1), appBarActivationLParam(true));
+}
+
+test "fullscreen AppBar notifications use the lParam opening flag" {
+    try std.testing.expect(fullscreenAppIsOpening(1));
+    try std.testing.expect(!fullscreenAppIsOpening(0));
 }
 
 test "TaskbarCreated is consumed and resets only active AppBars" {
