@@ -129,6 +129,12 @@ pub const AppBar = struct {
                 };
                 return true;
             },
+            .activation_changed => {
+                if (self.state == .active) {
+                    self.notifyActivation(wparam != win32.WA_INACTIVE);
+                }
+                return false;
+            },
             .window_position_changed => {
                 if (self.state != .active) {
                     return false;
@@ -219,6 +225,12 @@ pub const AppBar = struct {
         app_bar_data.rc = self.placement_rect;
         _ = win32.SHAppBarMessage(win32.ABM_QUERYPOS, &app_bar_data);
         self.placement_rect = preserveThickness(app_bar_data.rc, self.edge, self.thickness);
+    }
+
+    fn notifyActivation(self: *AppBar, is_active: bool) void {
+        var app_bar_data = makeAppBarData(self.window, 0);
+        app_bar_data.lParam = appBarActivationLParam(is_active);
+        _ = win32.SHAppBarMessage(win32.ABM_ACTIVATE, &app_bar_data);
     }
 
     fn applyPosition(self: *AppBar) Error!void {
@@ -466,6 +478,7 @@ const MessageAction = enum {
     taskbar_created,
     display_changed,
     dpi_changed,
+    activation_changed,
     window_position_changed,
     position_changed,
     callback,
@@ -492,6 +505,9 @@ fn messageAction(
     if (message == win32.WM_DPICHANGED) {
         return .dpi_changed;
     }
+    if (message == win32.WM_ACTIVATE) {
+        return .activation_changed;
+    }
     return .none;
 }
 
@@ -508,6 +524,10 @@ fn dpiFromWParam(wparam: WParam) u32 {
 
 fn shouldRepositionForWindowPositionChange(is_repositioning: bool) bool {
     return !is_repositioning;
+}
+
+fn appBarActivationLParam(is_active: bool) LParam {
+    return @intFromBool(is_active);
 }
 
 fn windowPositionFromRect(rect: win32.RECT) Error!WindowPosition {
@@ -634,6 +654,15 @@ test "DPI changes are consumed and use the Y-axis DPI" {
     );
     const dpi_wparam: WParam = (@as(WParam, 144) << 16) | 120;
     try std.testing.expectEqual(@as(u32, 144), dpiFromWParam(dpi_wparam));
+}
+
+test "activation changes are forwarded and report the active state" {
+    try std.testing.expectEqual(
+        MessageAction.activation_changed,
+        messageAction(0xc000, 0xc001, win32.WM_ACTIVATE, 0),
+    );
+    try std.testing.expectEqual(@as(LParam, 0), appBarActivationLParam(false));
+    try std.testing.expectEqual(@as(LParam, 1), appBarActivationLParam(true));
 }
 
 test "TaskbarCreated is consumed and resets only active AppBars" {

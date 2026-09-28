@@ -46,6 +46,7 @@ pub const ABM_NEW: windows.DWORD = 0x00000000;
 pub const ABM_REMOVE: windows.DWORD = 0x00000001;
 pub const ABM_QUERYPOS: windows.DWORD = 0x00000002;
 pub const ABM_SETPOS: windows.DWORD = 0x00000003;
+pub const ABM_ACTIVATE: windows.DWORD = 0x00000006;
 pub const ABM_WINDOWPOSCHANGED: windows.DWORD = 0x00000009;
 
 pub const ABN_POSCHANGED: usize = 0x00000001;
@@ -58,6 +59,9 @@ pub const ABE_BOTTOM: windows.UINT = 3;
 pub const SWP_NOZORDER: windows.UINT = 0x0004;
 pub const SWP_NOACTIVATE: windows.UINT = 0x0010;
 
+pub const WA_INACTIVE: usize = 0;
+
+pub const WM_ACTIVATE: windows.UINT = 0x0006;
 pub const WM_WINDOWPOSCHANGED: windows.UINT = 0x0047;
 pub const WM_DISPLAYCHANGE: windows.UINT = 0x007E;
 pub const WM_DPICHANGED: windows.UINT = 0x02E0;
