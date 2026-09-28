@@ -17,6 +17,8 @@ The public API registers an AppBar with `ABM_NEW`, reserves its position with `A
 
 On `WM_DISPLAYCHANGE`, the library first tries to find the monitor previously selected by its device interface name. If it is absent, it falls back to the original `monitor_index`, then to monitor index `0`. If no monitor is available, the AppBar is unregistered without destroying the window and is automatically retried on the next display change.
 
+`thickness` is always a physical-pixel value. On `WM_DPICHANGED`, the library keeps that thickness and re-queries, reserves, and positions the AppBar for the selected monitor. The application remains responsible for choosing its own DPI-awareness context; the library does not change process or thread DPI settings.
+
 ## Basic example
 
 Run an empty AppBar window with a monitor index, edge, and thickness in pixels:

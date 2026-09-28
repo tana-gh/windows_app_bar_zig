@@ -60,6 +60,7 @@ pub const SWP_NOACTIVATE: windows.UINT = 0x0010;
 
 pub const WM_WINDOWPOSCHANGED: windows.UINT = 0x0047;
 pub const WM_DISPLAYCHANGE: windows.UINT = 0x007E;
+pub const WM_DPICHANGED: windows.UINT = 0x02E0;
 
 pub const EDD_GET_DEVICE_INTERFACE_NAME: windows.DWORD = 0x00000001;
 

@@ -38,6 +38,7 @@ pub const AppBar = struct {
     callback_message: Message,
     placement_rect: win32.RECT,
     monitor_id: ?MonitorId,
+    window_dpi: u32,
     state: State,
 
     /// Registers an AppBar for a window.
@@ -63,6 +64,7 @@ pub const AppBar = struct {
             .callback_message = callback_message,
             .placement_rect = proposed_rect,
             .monitor_id = monitor.id,
+            .window_dpi = 0,
             .state = .suspended,
         };
         errdefer app_bar.cleanup();
@@ -96,6 +98,17 @@ pub const AppBar = struct {
                     return err;
                 };
                 return false;
+            },
+            .dpi_changed => {
+                if (self.state == .cleaned) {
+                    return false;
+                }
+                self.window_dpi = dpiFromWParam(wparam);
+                self.refreshDisplayConfiguration() catch |err| {
+                    self.unregister();
+                    return err;
+                };
+                return true;
             },
             .window_position_changed => {
                 if (self.state != .active) {
@@ -412,6 +425,7 @@ const WindowPosition = struct {
 const MessageAction = enum {
     none,
     display_changed,
+    dpi_changed,
     window_position_changed,
     position_changed,
     callback,
@@ -427,7 +441,14 @@ fn messageAction(callback_message: Message, message: Message, wparam: WParam) Me
     if (message == win32.WM_DISPLAYCHANGE) {
         return .display_changed;
     }
+    if (message == win32.WM_DPICHANGED) {
+        return .dpi_changed;
+    }
     return .none;
+}
+
+fn dpiFromWParam(wparam: WParam) u32 {
+    return @intCast((wparam >> 16) & 0xffff);
 }
 
 fn windowPositionFromRect(rect: win32.RECT) Error!WindowPosition {
@@ -545,6 +566,15 @@ test "display changes are forwarded without being consumed" {
         MessageAction.display_changed,
         messageAction(0xc000, win32.WM_DISPLAYCHANGE, 0),
     );
+}
+
+test "DPI changes are consumed and use the Y-axis DPI" {
+    try std.testing.expectEqual(
+        MessageAction.dpi_changed,
+        messageAction(0xc000, win32.WM_DPICHANGED, 0),
+    );
+    const dpi_wparam: WParam = (@as(WParam, 144) << 16) | 120;
+    try std.testing.expectEqual(@as(u32, 144), dpiFromWParam(dpi_wparam));
 }
 
 test "monitor selection prioritizes identity before index fallbacks" {
