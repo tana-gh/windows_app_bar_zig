@@ -8,6 +8,14 @@ pub const RECT = extern struct {
     bottom: windows.LONG,
 };
 
+pub const HMONITOR = *opaque {};
+pub const MONITORENUMPROC = *const fn (
+    monitor: HMONITOR,
+    hdc: ?std.os.windows.HDC,
+    monitor_rect: *RECT,
+    data: windows.LPARAM,
+) callconv(.winapi) windows.BOOL;
+
 pub const APPBARDATA = extern struct {
     cbSize: windows.DWORD,
     hWnd: windows.HWND,
@@ -28,6 +36,9 @@ pub const ABE_TOP: windows.UINT = 1;
 pub const ABE_RIGHT: windows.UINT = 2;
 pub const ABE_BOTTOM: windows.UINT = 3;
 
+pub const SWP_NOZORDER: windows.UINT = 0x0004;
+pub const SWP_NOACTIVATE: windows.UINT = 0x0010;
+
 pub extern "shell32" fn SHAppBarMessage(
     message: windows.DWORD,
     app_bar_data: *APPBARDATA,
@@ -36,6 +47,23 @@ pub extern "shell32" fn SHAppBarMessage(
 pub extern "user32" fn RegisterWindowMessageW(
     message: windows.LPCWSTR,
 ) callconv(.winapi) windows.UINT;
+
+pub extern "user32" fn EnumDisplayMonitors(
+    hdc: ?windows.HDC,
+    clip_rect: ?*const RECT,
+    callback: MONITORENUMPROC,
+    data: windows.LPARAM,
+) callconv(.winapi) windows.BOOL;
+
+pub extern "user32" fn SetWindowPos(
+    window: windows.HWND,
+    insert_after: ?windows.HWND,
+    x: i32,
+    y: i32,
+    width: i32,
+    height: i32,
+    flags: windows.UINT,
+) callconv(.winapi) windows.BOOL;
 
 test "APPBARDATA ABI matches the Windows SDK" {
     const expected_pointer_offset = @sizeOf(usize);
