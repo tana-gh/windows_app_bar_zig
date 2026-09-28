@@ -23,6 +23,7 @@ pub const Edge = enum(std.os.windows.UINT) {
 
 pub const Error = error{
     CallbackMessageRegistrationFailed,
+    TaskbarCreatedMessageRegistrationFailed,
     AppBarRegistrationFailed,
     MonitorNotFound,
     InvalidThickness,
@@ -36,6 +37,7 @@ pub const AppBar = struct {
     edge: Edge,
     thickness: u32,
     callback_message: Message,
+    taskbar_created_message: Message,
     placement_rect: win32.RECT,
     monitor_id: ?MonitorId,
     window_dpi: u32,
@@ -56,6 +58,10 @@ pub const AppBar = struct {
         if (callback_message == 0) {
             return error.CallbackMessageRegistrationFailed;
         }
+        const taskbar_created_message = win32.RegisterWindowMessageW(taskbar_created_message_name.ptr);
+        if (taskbar_created_message == 0) {
+            return error.TaskbarCreatedMessageRegistrationFailed;
+        }
 
         var app_bar = AppBar{
             .window = window,
@@ -63,6 +69,7 @@ pub const AppBar = struct {
             .edge = edge,
             .thickness = thickness,
             .callback_message = callback_message,
+            .taskbar_created_message = taskbar_created_message,
             .placement_rect = proposed_rect,
             .monitor_id = monitor.id,
             .window_dpi = 0,
@@ -89,8 +96,18 @@ pub const AppBar = struct {
     ) Error!bool {
         _ = lparam;
 
-        switch (messageAction(self.callback_message, message, wparam)) {
+        switch (messageAction(self.callback_message, self.taskbar_created_message, message, wparam)) {
             .none => return false,
+            .taskbar_created => {
+                if (self.state == .cleaned) {
+                    return false;
+                }
+                self.restoreAfterTaskbarRestart() catch |err| {
+                    self.unregister();
+                    return err;
+                };
+                return true;
+            },
             .display_changed => {
                 if (self.state == .cleaned) {
                     return false;
@@ -181,6 +198,11 @@ pub const AppBar = struct {
         }
     }
 
+    fn restoreAfterTaskbarRestart(self: *AppBar) Error!void {
+        self.state = stateAfterTaskbarRestart(self.state);
+        try self.refreshDisplayConfiguration();
+    }
+
     fn reposition(self: *AppBar) Error!void {
         if (self.is_repositioning) {
             return;
@@ -230,6 +252,10 @@ const State = enum {
 
 const callback_message_name = std.unicode.utf8ToUtf16LeStringLiteral(
     "windows_app_bar.AppBarCallback.v1",
+);
+
+const taskbar_created_message_name = std.unicode.utf8ToUtf16LeStringLiteral(
+    "TaskbarCreated",
 );
 
 fn makeAppBarData(window: WindowHandle, callback_message: Message) win32.APPBARDATA {
@@ -437,6 +463,7 @@ const WindowPosition = struct {
 
 const MessageAction = enum {
     none,
+    taskbar_created,
     display_changed,
     dpi_changed,
     window_position_changed,
@@ -444,7 +471,15 @@ const MessageAction = enum {
     callback,
 };
 
-fn messageAction(callback_message: Message, message: Message, wparam: WParam) MessageAction {
+fn messageAction(
+    callback_message: Message,
+    taskbar_created_message: Message,
+    message: Message,
+    wparam: WParam,
+) MessageAction {
+    if (message == taskbar_created_message) {
+        return .taskbar_created;
+    }
     if (message == callback_message) {
         return if (wparam == win32.ABN_POSCHANGED) .position_changed else .callback;
     }
@@ -458,6 +493,13 @@ fn messageAction(callback_message: Message, message: Message, wparam: WParam) Me
         return .dpi_changed;
     }
     return .none;
+}
+
+fn stateAfterTaskbarRestart(state: State) State {
+    return switch (state) {
+        .active => .suspended,
+        .suspended, .cleaned => state,
+    };
 }
 
 fn dpiFromWParam(wparam: WParam) u32 {
@@ -562,36 +604,46 @@ test "AppBar callback messages are consumed" {
 
     try std.testing.expectEqual(
         MessageAction.position_changed,
-        messageAction(callback_message, callback_message, win32.ABN_POSCHANGED),
+        messageAction(callback_message, 0xc001, callback_message, win32.ABN_POSCHANGED),
     );
     try std.testing.expectEqual(
         MessageAction.callback,
-        messageAction(callback_message, callback_message, 0),
+        messageAction(callback_message, 0xc001, callback_message, 0),
     );
 }
 
 test "window position changes are forwarded without being consumed" {
     try std.testing.expectEqual(
         MessageAction.window_position_changed,
-        messageAction(0xc000, win32.WM_WINDOWPOSCHANGED, 0),
+        messageAction(0xc000, 0xc001, win32.WM_WINDOWPOSCHANGED, 0),
     );
-    try std.testing.expectEqual(MessageAction.none, messageAction(0xc000, 1, 0));
+    try std.testing.expectEqual(MessageAction.none, messageAction(0xc000, 0xc001, 1, 0));
 }
 
 test "display changes are forwarded without being consumed" {
     try std.testing.expectEqual(
         MessageAction.display_changed,
-        messageAction(0xc000, win32.WM_DISPLAYCHANGE, 0),
+        messageAction(0xc000, 0xc001, win32.WM_DISPLAYCHANGE, 0),
     );
 }
 
 test "DPI changes are consumed and use the Y-axis DPI" {
     try std.testing.expectEqual(
         MessageAction.dpi_changed,
-        messageAction(0xc000, win32.WM_DPICHANGED, 0),
+        messageAction(0xc000, 0xc001, win32.WM_DPICHANGED, 0),
     );
     const dpi_wparam: WParam = (@as(WParam, 144) << 16) | 120;
     try std.testing.expectEqual(@as(u32, 144), dpiFromWParam(dpi_wparam));
+}
+
+test "TaskbarCreated is consumed and resets only active AppBars" {
+    try std.testing.expectEqual(
+        MessageAction.taskbar_created,
+        messageAction(0xc000, 0xc001, 0xc001, 0),
+    );
+    try std.testing.expectEqual(State.suspended, stateAfterTaskbarRestart(.active));
+    try std.testing.expectEqual(State.suspended, stateAfterTaskbarRestart(.suspended));
+    try std.testing.expectEqual(State.cleaned, stateAfterTaskbarRestart(.cleaned));
 }
 
 test "window position changes do not reenter AppBar repositioning" {
