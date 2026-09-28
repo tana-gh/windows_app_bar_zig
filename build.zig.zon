@@ -1,0 +1,12 @@
+.{
+    .name = .windows_app_bar,
+    .version = "0.1.0",
+    .fingerprint = 0xe23801bb117c7e9f,
+    .minimum_zig_version = "0.16.0",
+    .dependencies = .{},
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}
