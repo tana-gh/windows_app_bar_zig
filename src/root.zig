@@ -39,6 +39,7 @@ pub const AppBar = struct {
     placement_rect: win32.RECT,
     monitor_id: ?MonitorId,
     window_dpi: u32,
+    is_repositioning: bool,
     state: State,
 
     /// Registers an AppBar for a window.
@@ -65,6 +66,7 @@ pub const AppBar = struct {
             .placement_rect = proposed_rect,
             .monitor_id = monitor.id,
             .window_dpi = 0,
+            .is_repositioning = false,
             .state = .suspended,
         };
         errdefer app_bar.cleanup();
@@ -116,6 +118,12 @@ pub const AppBar = struct {
                 }
                 var app_bar_data = makeAppBarData(self.window, 0);
                 _ = win32.SHAppBarMessage(win32.ABM_WINDOWPOSCHANGED, &app_bar_data);
+                if (shouldRepositionForWindowPositionChange(self.is_repositioning)) {
+                    self.refreshDisplayConfiguration() catch |err| {
+                        self.unregister();
+                        return err;
+                    };
+                }
                 return false;
             },
             .position_changed => {
@@ -174,6 +182,11 @@ pub const AppBar = struct {
     }
 
     fn reposition(self: *AppBar) Error!void {
+        if (self.is_repositioning) {
+            return;
+        }
+        self.is_repositioning = true;
+        defer self.is_repositioning = false;
         self.queryPosition();
         try self.applyPosition();
     }
@@ -451,6 +464,10 @@ fn dpiFromWParam(wparam: WParam) u32 {
     return @intCast((wparam >> 16) & 0xffff);
 }
 
+fn shouldRepositionForWindowPositionChange(is_repositioning: bool) bool {
+    return !is_repositioning;
+}
+
 fn windowPositionFromRect(rect: win32.RECT) Error!WindowPosition {
     const width: i64 = @as(i64, rect.right) - @as(i64, rect.left);
     const height: i64 = @as(i64, rect.bottom) - @as(i64, rect.top);
@@ -575,6 +592,11 @@ test "DPI changes are consumed and use the Y-axis DPI" {
     );
     const dpi_wparam: WParam = (@as(WParam, 144) << 16) | 120;
     try std.testing.expectEqual(@as(u32, 144), dpiFromWParam(dpi_wparam));
+}
+
+test "window position changes do not reenter AppBar repositioning" {
+    try std.testing.expect(shouldRepositionForWindowPositionChange(false));
+    try std.testing.expect(!shouldRepositionForWindowPositionChange(true));
 }
 
 test "monitor selection prioritizes identity before index fallbacks" {
