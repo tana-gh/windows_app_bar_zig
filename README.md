@@ -2,6 +2,13 @@
 
 A Windows-only Zig wrapper for the Win32 AppBar API.
 
+## Requirements
+
+- Zig 0.16.0
+- A Windows target
+
+The development environment is Windows 11. The library does not impose a minimum Windows version because the AppBar API has been available in Windows for a long time.
+
 This project will provide a small, idiomatic interface for reserving an edge of a monitor for an application window. It is intended for applications such as docks, sidebars, and desktop panels that must cooperate with the Windows taskbar and other AppBars.
 
 The library is currently at the planning stage; no AppBar functionality has been implemented yet. The implementation will start with registering and removing an AppBar, then add window-message handling and support for monitor, DPI, and taskbar changes.
