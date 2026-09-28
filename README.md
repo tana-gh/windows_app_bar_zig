@@ -13,7 +13,9 @@ This project will provide a small, idiomatic interface for reserving an edge of 
 
 The public API registers an AppBar with `ABM_NEW`, reserves its position with `ABM_SETPOS`, moves the window with `SetWindowPos`, and removes the AppBar with `ABM_REMOVE`. It also handles AppBar position-change notifications and forwards `WM_WINDOWPOSCHANGED` to the AppBar system. Monitor-configuration and DPI changes have not been implemented yet.
 
-`monitor_index` is zero-based in the order reported by `EnumDisplayMonitors`. That order can change when the monitor configuration changes. The requested thickness must be greater than zero and no larger than the selected monitor dimension along the AppBar edge.
+`monitor_index` is zero-based in the order reported by `EnumDisplayMonitors`. The requested thickness must be greater than zero and no larger than the selected monitor dimension along the AppBar edge.
+
+On `WM_DISPLAYCHANGE`, the library first tries to find the monitor previously selected by its device interface name. If it is absent, it falls back to the original `monitor_index`, then to monitor index `0`. If no monitor is available, the AppBar is unregistered without destroying the window and is automatically retried on the next display change.
 
 ## Basic example
 

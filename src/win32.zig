@@ -25,6 +25,23 @@ pub const APPBARDATA = extern struct {
     lParam: windows.LPARAM,
 };
 
+pub const MONITORINFOEXW = extern struct {
+    cbSize: windows.DWORD,
+    rcMonitor: RECT,
+    rcWork: RECT,
+    dwFlags: windows.DWORD,
+    szDevice: [32]windows.WCHAR,
+};
+
+pub const DISPLAY_DEVICEW = extern struct {
+    cb: windows.DWORD,
+    DeviceName: [32]windows.WCHAR,
+    DeviceString: [128]windows.WCHAR,
+    StateFlags: windows.DWORD,
+    DeviceID: [128]windows.WCHAR,
+    DeviceKey: [128]windows.WCHAR,
+};
+
 pub const ABM_NEW: windows.DWORD = 0x00000000;
 pub const ABM_REMOVE: windows.DWORD = 0x00000001;
 pub const ABM_QUERYPOS: windows.DWORD = 0x00000002;
@@ -42,6 +59,9 @@ pub const SWP_NOZORDER: windows.UINT = 0x0004;
 pub const SWP_NOACTIVATE: windows.UINT = 0x0010;
 
 pub const WM_WINDOWPOSCHANGED: windows.UINT = 0x0047;
+pub const WM_DISPLAYCHANGE: windows.UINT = 0x007E;
+
+pub const EDD_GET_DEVICE_INTERFACE_NAME: windows.DWORD = 0x00000001;
 
 pub extern "shell32" fn SHAppBarMessage(
     message: windows.DWORD,
@@ -57,6 +77,18 @@ pub extern "user32" fn EnumDisplayMonitors(
     clip_rect: ?*const RECT,
     callback: MONITORENUMPROC,
     data: windows.LPARAM,
+) callconv(.winapi) windows.BOOL;
+
+pub extern "user32" fn GetMonitorInfoW(
+    monitor: HMONITOR,
+    monitor_info: *MONITORINFOEXW,
+) callconv(.winapi) windows.BOOL;
+
+pub extern "user32" fn EnumDisplayDevicesW(
+    device_name: windows.LPCWSTR,
+    device_number: windows.DWORD,
+    display_device: *DISPLAY_DEVICEW,
+    flags: windows.DWORD,
 ) callconv(.winapi) windows.BOOL;
 
 pub extern "user32" fn SetWindowPos(
@@ -84,4 +116,9 @@ test "APPBARDATA ABI matches the Windows SDK" {
     try std.testing.expectEqual(expected_pointer_offset * 2 + 8, @offsetOf(APPBARDATA, "rc"));
     try std.testing.expectEqual(expected_pointer_offset * 2 + 24, @offsetOf(APPBARDATA, "lParam"));
     try std.testing.expectEqual(expected_size, @sizeOf(APPBARDATA));
+}
+
+test "monitor structures match the Windows SDK" {
+    try std.testing.expectEqual(@as(usize, 104), @sizeOf(MONITORINFOEXW));
+    try std.testing.expectEqual(@as(usize, 840), @sizeOf(DISPLAY_DEVICEW));
 }

@@ -1,5 +1,6 @@
 const builtin = @import("builtin");
 const std = @import("std");
+const windows = std.os.windows;
 const win32 = @import("win32.zig");
 
 comptime {
@@ -31,12 +32,13 @@ pub const Error = error{
 
 pub const AppBar = struct {
     window: WindowHandle,
-    monitor_index: u32,
+    preferred_monitor_index: u32,
     edge: Edge,
     thickness: u32,
     callback_message: Message,
     placement_rect: win32.RECT,
-    registered: bool,
+    monitor_id: ?MonitorId,
+    state: State,
 
     /// Registers an AppBar for a window.
     pub fn register(
@@ -45,43 +47,33 @@ pub const AppBar = struct {
         edge: Edge,
         thickness: u32,
     ) Error!AppBar {
-        const monitor_rect = try findMonitorRect(monitor_index);
-        const proposed_rect = try makeProposedRect(monitor_rect, edge, thickness);
+        const monitor = resolveMonitor(monitor_index, null) orelse return error.MonitorNotFound;
+        const proposed_rect = try makeProposedRect(monitor.rect, edge, thickness);
 
         const callback_message = win32.RegisterWindowMessageW(callback_message_name.ptr);
         if (callback_message == 0) {
             return error.CallbackMessageRegistrationFailed;
         }
 
-        var app_bar_data = makeAppBarData(window, callback_message);
-        if (win32.SHAppBarMessage(win32.ABM_NEW, &app_bar_data) == 0) {
-            return error.AppBarRegistrationFailed;
-        }
-
         var app_bar = AppBar{
             .window = window,
-            .monitor_index = monitor_index,
+            .preferred_monitor_index = monitor_index,
             .edge = edge,
             .thickness = thickness,
             .callback_message = callback_message,
             .placement_rect = proposed_rect,
-            .registered = true,
+            .monitor_id = monitor.id,
+            .state = .suspended,
         };
         errdefer app_bar.cleanup();
-        app_bar.queryPosition();
-        try app_bar.applyPosition();
+        try app_bar.activate();
         return app_bar;
     }
 
     /// Removes the AppBar registration if it is active.
     pub fn cleanup(self: *AppBar) void {
-        if (!self.registered) {
-            return;
-        }
-
-        var app_bar_data = makeAppBarData(self.window, 0);
-        _ = win32.SHAppBarMessage(win32.ABM_REMOVE, &app_bar_data);
-        self.registered = false;
+        self.unregister();
+        self.state = .cleaned;
     }
 
     /// Handles a window message and reports whether it was consumed.
@@ -93,27 +85,84 @@ pub const AppBar = struct {
     ) Error!bool {
         _ = lparam;
 
-        if (!self.registered) {
-            return false;
-        }
-
         switch (messageAction(self.callback_message, message, wparam)) {
             .none => return false,
+            .display_changed => {
+                if (self.state == .cleaned) {
+                    return false;
+                }
+                self.refreshDisplayConfiguration() catch |err| {
+                    self.unregister();
+                    return err;
+                };
+                return false;
+            },
             .window_position_changed => {
+                if (self.state != .active) {
+                    return false;
+                }
                 var app_bar_data = makeAppBarData(self.window, 0);
                 _ = win32.SHAppBarMessage(win32.ABM_WINDOWPOSCHANGED, &app_bar_data);
                 return false;
             },
             .position_changed => {
-                self.queryPosition();
-                self.applyPosition() catch |err| {
-                    self.cleanup();
+                if (self.state != .active) {
+                    return false;
+                }
+                self.reposition() catch |err| {
+                    self.unregister();
                     return err;
                 };
                 return true;
             },
-            .callback => return true,
+            .callback => return self.state == .active,
         }
+    }
+
+    fn activate(self: *AppBar) Error!void {
+        var app_bar_data = makeAppBarData(self.window, self.callback_message);
+        if (win32.SHAppBarMessage(win32.ABM_NEW, &app_bar_data) == 0) {
+            return error.AppBarRegistrationFailed;
+        }
+        self.state = .active;
+        errdefer self.unregister();
+        try self.reposition();
+    }
+
+    fn unregister(self: *AppBar) void {
+        if (self.state != .active) {
+            return;
+        }
+
+        var app_bar_data = makeAppBarData(self.window, 0);
+        _ = win32.SHAppBarMessage(win32.ABM_REMOVE, &app_bar_data);
+        self.state = .suspended;
+    }
+
+    fn refreshDisplayConfiguration(self: *AppBar) Error!void {
+        const monitor = resolveMonitor(self.preferred_monitor_index, self.monitor_id) orelse {
+            self.unregister();
+            return;
+        };
+        const proposed_rect = makeProposedRect(monitor.rect, self.edge, self.thickness) catch |err| {
+            self.unregister();
+            return err;
+        };
+
+        self.monitor_id = monitor.id;
+        self.placement_rect = proposed_rect;
+        if (self.state == .suspended) {
+            try self.activate();
+            return;
+        }
+        if (self.state == .active) {
+            try self.reposition();
+        }
+    }
+
+    fn reposition(self: *AppBar) Error!void {
+        self.queryPosition();
+        try self.applyPosition();
     }
 
     fn queryPosition(self: *AppBar) void {
@@ -147,6 +196,12 @@ pub const AppBar = struct {
     }
 };
 
+const State = enum {
+    active,
+    suspended,
+    cleaned,
+};
+
 const callback_message_name = std.unicode.utf8ToUtf16LeStringLiteral(
     "windows_app_bar.AppBarCallback.v1",
 );
@@ -167,36 +222,143 @@ fn makeAppBarData(window: WindowHandle, callback_message: Message) win32.APPBARD
     };
 }
 
-const MonitorSearch = struct {
-    index: u32,
-    rect: ?win32.RECT = null,
+const MonitorId = [128]windows.WCHAR;
+
+const Monitor = struct {
+    rect: win32.RECT,
+    id: ?MonitorId,
 };
 
-fn findMonitorRect(index: u32) Error!win32.RECT {
-    var search = MonitorSearch{ .index = index };
+const MonitorSearch = struct {
+    target: union(enum) {
+        index: u32,
+        id: MonitorId,
+    },
+    monitor: ?Monitor = null,
+};
+
+fn resolveMonitor(preferred_index: u32, previous_id: ?MonitorId) ?Monitor {
+    if (previous_id) |id| {
+        if (findMonitorById(id)) |monitor| {
+            return monitor;
+        }
+    }
+    return findMonitorByIndex(preferred_index) orelse findMonitorByIndex(0);
+}
+
+fn findMonitorById(id: MonitorId) ?Monitor {
+    var search = MonitorSearch{ .target = .{ .id = id } };
     _ = win32.EnumDisplayMonitors(
         null,
         null,
         findMonitorCallback,
         @bitCast(@intFromPtr(&search)),
     );
-    return search.rect orelse error.MonitorNotFound;
+    return search.monitor;
+}
+
+fn findMonitorByIndex(index: u32) ?Monitor {
+    var search = MonitorSearch{ .target = .{ .index = index } };
+    _ = win32.EnumDisplayMonitors(
+        null,
+        null,
+        findMonitorCallback,
+        @bitCast(@intFromPtr(&search)),
+    );
+    return search.monitor;
 }
 
 fn findMonitorCallback(
-    _: win32.HMONITOR,
+    monitor_handle: win32.HMONITOR,
     _: ?std.os.windows.HDC,
     monitor_rect: *win32.RECT,
     data: LParam,
 ) callconv(.winapi) std.os.windows.BOOL {
     const search: *MonitorSearch = @ptrFromInt(@as(usize, @bitCast(data)));
-    if (search.index == 0) {
-        search.rect = monitor_rect.*;
-        return .FALSE;
+    const monitor = Monitor{
+        .rect = monitor_rect.*,
+        .id = getMonitorId(monitor_handle),
+    };
+
+    switch (search.target) {
+        .index => |*index| {
+            if (index.* == 0) {
+                search.monitor = monitor;
+                return .FALSE;
+            }
+            index.* -= 1;
+        },
+        .id => |id| {
+            if (monitor.id) |monitor_id| {
+                if (monitorIdsEqual(monitor_id, id)) {
+                    search.monitor = monitor;
+                    return .FALSE;
+                }
+            }
+        },
+    }
+    return .TRUE;
+}
+
+fn getMonitorId(monitor: win32.HMONITOR) ?MonitorId {
+    var monitor_info = win32.MONITORINFOEXW{
+        .cbSize = @sizeOf(win32.MONITORINFOEXW),
+        .rcMonitor = undefined,
+        .rcWork = undefined,
+        .dwFlags = 0,
+        .szDevice = [_]windows.WCHAR{0} ** 32,
+    };
+    if (!win32.GetMonitorInfoW(monitor, &monitor_info).toBool()) {
+        return null;
     }
 
-    search.index -= 1;
-    return .TRUE;
+    var display_device = win32.DISPLAY_DEVICEW{
+        .cb = @sizeOf(win32.DISPLAY_DEVICEW),
+        .DeviceName = [_]windows.WCHAR{0} ** 32,
+        .DeviceString = [_]windows.WCHAR{0} ** 128,
+        .StateFlags = 0,
+        .DeviceID = [_]windows.WCHAR{0} ** 128,
+        .DeviceKey = [_]windows.WCHAR{0} ** 128,
+    };
+    if (!win32.EnumDisplayDevicesW(
+        @ptrCast(&monitor_info.szDevice),
+        0,
+        &display_device,
+        win32.EDD_GET_DEVICE_INTERFACE_NAME,
+    ).toBool()) {
+        return null;
+    }
+    if (display_device.DeviceID[0] == 0) {
+        return null;
+    }
+    return display_device.DeviceID;
+}
+
+fn monitorIdsEqual(first: MonitorId, second: MonitorId) bool {
+    return std.mem.eql(windows.WCHAR, first[0..], second[0..]);
+}
+
+fn selectMonitorFromSlice(
+    monitors: []const Monitor,
+    preferred_index: u32,
+    previous_id: ?MonitorId,
+) ?Monitor {
+    if (previous_id) |id| {
+        for (monitors) |monitor| {
+            if (monitor.id) |monitor_id| {
+                if (monitorIdsEqual(monitor_id, id)) {
+                    return monitor;
+                }
+            }
+        }
+    }
+    if (preferred_index < monitors.len) {
+        return monitors[preferred_index];
+    }
+    if (monitors.len != 0) {
+        return monitors[0];
+    }
+    return null;
 }
 
 fn makeProposedRect(monitor_rect: win32.RECT, edge: Edge, thickness: u32) Error!win32.RECT {
@@ -249,6 +411,7 @@ const WindowPosition = struct {
 
 const MessageAction = enum {
     none,
+    display_changed,
     window_position_changed,
     position_changed,
     callback,
@@ -260,6 +423,9 @@ fn messageAction(callback_message: Message, message: Message, wparam: WParam) Me
     }
     if (message == win32.WM_WINDOWPOSCHANGED) {
         return .window_position_changed;
+    }
+    if (message == win32.WM_DISPLAYCHANGE) {
+        return .display_changed;
     }
     return .none;
 }
@@ -372,4 +538,33 @@ test "window position changes are forwarded without being consumed" {
         messageAction(0xc000, win32.WM_WINDOWPOSCHANGED, 0),
     );
     try std.testing.expectEqual(MessageAction.none, messageAction(0xc000, 1, 0));
+}
+
+test "display changes are forwarded without being consumed" {
+    try std.testing.expectEqual(
+        MessageAction.display_changed,
+        messageAction(0xc000, win32.WM_DISPLAYCHANGE, 0),
+    );
+}
+
+test "monitor selection prioritizes identity before index fallbacks" {
+    var first_id = [_]windows.WCHAR{0} ** 128;
+    first_id[0] = 1;
+    var second_id = [_]windows.WCHAR{0} ** 128;
+    second_id[0] = 2;
+    const monitors = [_]Monitor{
+        .{ .rect = .{ .left = 0, .top = 0, .right = 100, .bottom = 100 }, .id = first_id },
+        .{ .rect = .{ .left = 100, .top = 0, .right = 200, .bottom = 100 }, .id = second_id },
+    };
+
+    const identity_match = selectMonitorFromSlice(&monitors, 0, second_id).?;
+    try std.testing.expectEqual(@as(i32, 100), identity_match.rect.left);
+
+    const preferred_index_match = selectMonitorFromSlice(&monitors, 1, null).?;
+    try std.testing.expectEqual(@as(i32, 100), preferred_index_match.rect.left);
+
+    const zero_index_fallback = selectMonitorFromSlice(&monitors, 9, null).?;
+    try std.testing.expectEqual(@as(i32, 0), zero_index_fallback.rect.left);
+
+    try std.testing.expect(selectMonitorFromSlice(&.{}, 0, null) == null);
 }
