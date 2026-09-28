@@ -50,11 +50,13 @@ The library uses Zig declarations for the small Win32 surface it needs. They are
 The intended usage is:
 
 ```zig
-var app_bar = try AppBar.register(hwnd, monitor_index, .right, width);
+var app_bar = try AppBar.register(hwnd, monitor_index, .right, thickness);
 defer app_bar.cleanup();
 
 // In the window procedure:
-const consumed = try app_bar.handleWindowMessage(message, wparam, lparam);
+const consumed = app_bar.handleWindowMessage(message, wparam, lparam) catch {
+    // handle errors
+}
 if (consumed) {
     return 0;
 }
