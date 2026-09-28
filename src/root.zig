@@ -91,11 +91,29 @@ pub const AppBar = struct {
         wparam: WParam,
         lparam: LParam,
     ) Error!bool {
-        _ = self;
-        _ = message;
-        _ = wparam;
         _ = lparam;
-        return false;
+
+        if (!self.registered) {
+            return false;
+        }
+
+        switch (messageAction(self.callback_message, message, wparam)) {
+            .none => return false,
+            .window_position_changed => {
+                var app_bar_data = makeAppBarData(self.window, 0);
+                _ = win32.SHAppBarMessage(win32.ABM_WINDOWPOSCHANGED, &app_bar_data);
+                return false;
+            },
+            .position_changed => {
+                self.queryPosition();
+                self.applyPosition() catch |err| {
+                    self.cleanup();
+                    return err;
+                };
+                return true;
+            },
+            .callback => return true,
+        }
     }
 
     fn queryPosition(self: *AppBar) void {
@@ -229,6 +247,23 @@ const WindowPosition = struct {
     height: i32,
 };
 
+const MessageAction = enum {
+    none,
+    window_position_changed,
+    position_changed,
+    callback,
+};
+
+fn messageAction(callback_message: Message, message: Message, wparam: WParam) MessageAction {
+    if (message == callback_message) {
+        return if (wparam == win32.ABN_POSCHANGED) .position_changed else .callback;
+    }
+    if (message == win32.WM_WINDOWPOSCHANGED) {
+        return .window_position_changed;
+    }
+    return .none;
+}
+
 fn windowPositionFromRect(rect: win32.RECT) Error!WindowPosition {
     const width: i64 = @as(i64, rect.right) - @as(i64, rect.left);
     const height: i64 = @as(i64, rect.bottom) - @as(i64, rect.top);
@@ -316,4 +351,25 @@ test "window placement rejects empty rectangles" {
         .right = 100,
         .bottom = 100,
     }));
+}
+
+test "AppBar callback messages are consumed" {
+    const callback_message: Message = 0xc000;
+
+    try std.testing.expectEqual(
+        MessageAction.position_changed,
+        messageAction(callback_message, callback_message, win32.ABN_POSCHANGED),
+    );
+    try std.testing.expectEqual(
+        MessageAction.callback,
+        messageAction(callback_message, callback_message, 0),
+    );
+}
+
+test "window position changes are forwarded without being consumed" {
+    try std.testing.expectEqual(
+        MessageAction.window_position_changed,
+        messageAction(0xc000, win32.WM_WINDOWPOSCHANGED, 0),
+    );
+    try std.testing.expectEqual(MessageAction.none, messageAction(0xc000, 1, 0));
 }

@@ -31,6 +31,8 @@ pub const ABM_QUERYPOS: windows.DWORD = 0x00000002;
 pub const ABM_SETPOS: windows.DWORD = 0x00000003;
 pub const ABM_WINDOWPOSCHANGED: windows.DWORD = 0x00000009;
 
+pub const ABN_POSCHANGED: usize = 0x00000001;
+
 pub const ABE_LEFT: windows.UINT = 0;
 pub const ABE_TOP: windows.UINT = 1;
 pub const ABE_RIGHT: windows.UINT = 2;
@@ -38,6 +40,8 @@ pub const ABE_BOTTOM: windows.UINT = 3;
 
 pub const SWP_NOZORDER: windows.UINT = 0x0004;
 pub const SWP_NOACTIVATE: windows.UINT = 0x0010;
+
+pub const WM_WINDOWPOSCHANGED: windows.UINT = 0x0047;
 
 pub extern "shell32" fn SHAppBarMessage(
     message: windows.DWORD,
