@@ -11,7 +11,9 @@ The development environment is Windows 11. The library does not impose a minimum
 
 This project will provide a small, idiomatic interface for reserving an edge of a monitor for an application window. It is intended for applications such as docks, sidebars, and desktop panels that must cooperate with the Windows taskbar and other AppBars.
 
-The library is currently at the planning stage; no AppBar functionality has been implemented yet. The implementation will start with registering and removing an AppBar, then add window-message handling and support for monitor, DPI, and taskbar changes.
+The public API and internal Win32 ABI declarations are in place. AppBar registration has not been implemented yet: `AppBar.register` currently returns `error.NotImplemented`. The next implementation step is registering and removing an AppBar, followed by window-message handling and support for monitor, DPI, and taskbar changes.
+
+The library uses Zig declarations for the small Win32 surface it needs. They are verified against the Windows SDK and link to `Shell32.lib` and `User32.lib`; consumers do not need to configure C header imports.
 
 The intended usage is:
 

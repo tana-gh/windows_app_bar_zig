@@ -1,7 +1,7 @@
 .{
     .name = .windows_app_bar,
     .version = "0.1.0",
-    .fingerprint = 0xe23801bb117c7e9f,
+    .fingerprint = 0xe03425d75bd1f461,
     .minimum_zig_version = "0.16.0",
     .dependencies = .{},
     .paths = .{
