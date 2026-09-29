@@ -19,6 +19,7 @@ const IDC_ARROW: windows.LPCWSTR = @ptrFromInt(32512);
 const WM_CLOSE: windows.UINT = 0x0010;
 const WM_DESTROY: windows.UINT = 0x0002;
 const WM_COMMAND: windows.UINT = 0x0111;
+const WM_DPICHANGED: windows.UINT = 0x02e0;
 
 const button_show = 100;
 const button_hide = 101;
@@ -243,6 +244,10 @@ fn appBarWindowProc(window: windows.HWND, message: windows.UINT, wparam: usize, 
             application.updateControls();
             return 0;
         };
+        if (message == WM_DPICHANGED) {
+            // The AppBar has applied its shell-approved placement; update DPI-dependent resources here.
+            return 0;
+        }
         if (consumed) return 0;
     };
     switch (message) {

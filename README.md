@@ -31,7 +31,7 @@ Call `refresh()` to explicitly re-query and reserve the current position after a
 
 On `WM_DISPLAYCHANGE`, the library first tries to find the monitor previously selected by its device interface name. If it is absent, it falls back to the saved preferred monitor index, then to monitor index `0`. If no monitor is available, the AppBar is unregistered without destroying the window and is automatically retried on the next display change.
 
-`thickness` is always a physical-pixel value. On `WM_DPICHANGED`, the library keeps that thickness and re-queries, reserves, and positions the AppBar for the selected monitor. The application remains responsible for choosing its own DPI-awareness context; the library does not change process or thread DPI settings.
+`thickness` is always a physical-pixel value. On `WM_DPICHANGED`, the library keeps that thickness and re-queries, reserves, and positions the AppBar for the selected monitor. It then leaves the message unconsumed so the application can update DPI-dependent resources such as fonts and child windows. The shell-approved AppBar placement takes precedence over the suggested rectangle in `lParam`. The application remains responsible for choosing its own DPI-awareness context; the library does not change process or thread DPI settings.
 
 When the AppBar window is moved or resized, `WM_WINDOWPOSCHANGED` causes the library to refresh the selected monitor, edge, and thickness. Synchronous internal repositioning does not report another `ABM_WINDOWPOSCHANGED`; `ABN_POSCHANGED` always re-queries and refreshes the AppBar position.
 
@@ -62,6 +62,10 @@ defer app_bar.deinit();
 // In the window procedure:
 const consumed = app_bar.handleMessage(message, wparam, lparam) catch {
     // handle errors
+}
+if (message == WM_DPICHANGED) {
+    // Update DPI-dependent application resources here.
+    return 0;
 }
 if (consumed) {
     return 0;

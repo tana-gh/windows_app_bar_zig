@@ -182,7 +182,10 @@ pub const AppBar = struct {
                 _ = try self.refreshIfUsable();
                 return false;
             },
-            .dpi_changed => return self.refreshIfUsable(),
+            .dpi_changed => {
+                _ = try self.refreshIfUsable();
+                return false;
+            },
             .activation_changed => {
                 if (self.state == .active) self.notifyActivation(message_handler.activationIsActive(wparam));
                 return false;

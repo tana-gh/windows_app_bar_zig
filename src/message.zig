@@ -131,7 +131,7 @@ test "display changes are forwarded without being consumed" {
     );
 }
 
-test "DPI changes are consumed" {
+test "DPI changes are routed to AppBar refresh" {
     try std.testing.expectEqual(
         MessageAction.dpi_changed,
         messageAction(0xc000, 0xc001, win32.WM_DPICHANGED, 0),
