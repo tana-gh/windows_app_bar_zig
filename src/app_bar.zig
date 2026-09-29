@@ -230,6 +230,8 @@ pub const AppBar = struct {
 
     fn setConfiguration(self: *AppBar, configuration: PlacementConfiguration) Error!void {
         if (!message_handler.canRefresh(self.state)) return error.AppBarDeinitialized;
+        const selected_monitor = monitor.resolveMonitor(configuration.fallback_monitor_index, configuration.monitor_id);
+        try validatePlacementConfiguration(configuration, if (selected_monitor) |value| value.rect else null);
         const previous = ConfigurationSnapshot.fromAppBar(self);
         self.configuration = configuration;
         self.refresh() catch |err| {
@@ -344,6 +346,11 @@ const PlacementConfiguration = struct {
     monitor_id: ?MonitorId,
 };
 
+fn validatePlacementConfiguration(configuration: PlacementConfiguration, monitor_rect: ?win32.RECT) Error!void {
+    const rect = monitor_rect orelse return;
+    _ = try geometry.validateThickness(rect, configuration.edge, configuration.thickness);
+}
+
 const ConfigurationSnapshot = struct {
     configuration: PlacementConfiguration,
     monitor_rect: win32.RECT,
@@ -390,6 +397,19 @@ test "fullscreen AppBar Z order follows the taskbar always-on-top state" {
     try std.testing.expectEqual(win32.HWND_BOTTOM, fullscreenInsertAfter(0));
     try std.testing.expectEqual(win32.HWND_TOPMOST, fullscreenInsertAfter(win32.ABS_ALWAYSONTOP));
     try std.testing.expectEqual(win32.HWND_TOPMOST, fullscreenInsertAfter(win32.ABS_ALWAYSONTOP | 1));
+}
+
+test "configuration validation rejects invalid thickness before applying it" {
+    const monitor_rect = win32.RECT{ .left = 0, .top = 0, .right = 100, .bottom = 50 };
+    const configuration = PlacementConfiguration{
+        .fallback_monitor_index = 0,
+        .edge = .right,
+        .thickness = 101,
+        .monitor_id = null,
+    };
+
+    try std.testing.expectError(error.InvalidThickness, validatePlacementConfiguration(configuration, monitor_rect));
+    try validatePlacementConfiguration(configuration, null);
 }
 
 test "read-only AppBar APIs expose configuration and active reservation" {
