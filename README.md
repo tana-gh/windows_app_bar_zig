@@ -39,13 +39,13 @@ Explorer restart recovery is implemented through the `TaskbarCreated` message. `
 
 ## Basic example
 
-Run an empty AppBar window with a monitor index, edge, and thickness in pixels:
+Run the interactive AppBar example with an initial monitor index, edge, and thickness in pixels:
 
 ```powershell
 zig build example-basic -- 0 right 320
 ```
 
-The edge must be `left`, `top`, `right`, or `bottom`. Press Ctrl+C in the terminal to remove the AppBar and exit the example.
+The edge must be `left`, `top`, `right`, or `bottom`. The example opens a separate control panel that can show or hide the AppBar, change its edge, fallback monitor, and thickness, refresh it, unregister or reregister it, and deinitialize or register it again. The panel displays the current lifecycle, visibility, placement, and the most recent operation result. Press Ctrl+C in the terminal to remove the AppBar and exit the example.
 
 The library uses Zig declarations for the small Win32 surface it needs. They are verified against the Windows SDK and link to `Shell32.lib` and `User32.lib`; consumers do not need to configure C header imports.
 
