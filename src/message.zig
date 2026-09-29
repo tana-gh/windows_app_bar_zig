@@ -71,6 +71,10 @@ pub fn appBarActivationLParam(is_active: bool) api.LParam {
     return @intFromBool(is_active);
 }
 
+pub fn activationIsActive(wparam: api.WParam) bool {
+    return wparam & 0xffff != win32.WA_INACTIVE;
+}
+
 pub fn fullscreenAppIsOpening(lparam: api.LParam) bool {
     return lparam != 0;
 }
@@ -141,6 +145,10 @@ test "activation changes are forwarded and report the active state" {
     );
     try std.testing.expectEqual(@as(api.LParam, 0), appBarActivationLParam(false));
     try std.testing.expectEqual(@as(api.LParam, 1), appBarActivationLParam(true));
+    try std.testing.expect(!activationIsActive(0));
+    try std.testing.expect(activationIsActive(1));
+    try std.testing.expect(activationIsActive(2));
+    try std.testing.expect(!activationIsActive(@as(api.WParam, 1) << 16));
 }
 
 test "automatic re-registration excludes manually unregistered AppBars" {

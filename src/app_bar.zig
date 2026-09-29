@@ -184,7 +184,7 @@ pub const AppBar = struct {
             },
             .dpi_changed => return self.refreshIfUsable(),
             .activation_changed => {
-                if (self.state == .active) self.notifyActivation(wparam != win32.WA_INACTIVE);
+                if (self.state == .active) self.notifyActivation(message_handler.activationIsActive(wparam));
                 return false;
             },
             .window_position_changed => {
