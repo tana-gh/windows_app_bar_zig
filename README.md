@@ -19,7 +19,7 @@ The requested thickness must be greater than zero and no larger than the selecte
 
 `window()`, `edge()`, `fallbackMonitorIndex()`, and `thickness()` expose the requested configuration. `candidateRect()` returns a fresh candidate rectangle, while `allocatedRect()` returns the shell-approved rectangle only while the AppBar is registered. `Rect` values use screen coordinates in physical pixels.
 
-`setEdge()`, `setFallbackMonitorIndex()`, and `setThickness()` immediately refresh the AppBar position. If applying a new setting fails, the library restores the previous setting and reservation; if that restoration fails, the setter returns `error.ConfigurationRollbackFailed`.
+`setEdge()`, `setMonitor()`, `setFallbackMonitorIndex()`, and `setThickness()` immediately refresh the AppBar position. `setMonitor()` accepts the same `MonitorTarget` used during registration and resolves it strictly, returning `error.MonitorNotFound` when the target is unavailable. The resolved monitor ID is retained when available so later display changes continue to prefer the same physical monitor; its index is retained as a fallback. If applying a new setting fails, the library restores the previous setting and reservation; if that restoration fails, the setter returns `error.ConfigurationRollbackFailed`.
 
 `status()` returns `Status.active`, `Status.suspended`, or `Status.deinitialized`. `isRegistered()` is true only while the AppBar is active and registered with the shell.
 
@@ -45,7 +45,7 @@ Run the interactive AppBar example with an initial monitor index, edge, and thic
 zig build example-basic -- 0 right 320
 ```
 
-The edge must be `left`, `top`, `right`, or `bottom`. The example opens a separate control panel that can show or hide the AppBar, change its edge, fallback monitor, and thickness, refresh it, unregister or reregister it, and deinitialize or register it again. The panel displays the current lifecycle, visibility, placement, and the most recent operation result. Press Ctrl+C in the terminal to remove the AppBar and exit the example.
+The edge must be `left`, `top`, `right`, or `bottom`. The example opens a separate control panel that can show or hide the AppBar, change its edge, monitor, and thickness, refresh it, unregister or reregister it, and deinitialize or register it again. The panel displays the current lifecycle, visibility, placement, and the most recent operation result. Press Ctrl+C in the terminal to remove the AppBar and exit the example.
 
 The library uses Zig declarations for the small Win32 surface it needs. They are verified against the Windows SDK and link to `Shell32.lib` and `User32.lib`; consumers do not need to configure C header imports.
 
@@ -58,6 +58,8 @@ var app_bar = try AppBar.register(hwnd, .{
     .thickness = thickness,
 });
 defer app_bar.deinit();
+
+try app_bar.setMonitor(.{ .index = other_monitor_index });
 
 // In the window procedure:
 const consumed = app_bar.handleMessage(message, wparam, lparam) catch {

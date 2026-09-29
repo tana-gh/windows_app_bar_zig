@@ -109,6 +109,12 @@ pub const AppBar = struct {
         try self.setConfiguration(configuration);
     }
 
+    /// Updates the target monitor and refreshes the AppBar position.
+    pub fn setMonitor(self: *AppBar, target: api.MonitorTarget) Error!void {
+        const selected_monitor = monitor.resolveMonitorTarget(target) orelse return error.MonitorNotFound;
+        try self.setConfiguration(configurationForMonitor(self.configuration, selected_monitor));
+    }
+
     /// Updates the fallback monitor index and refreshes the AppBar position.
     pub fn setFallbackMonitorIndex(self: *AppBar, monitor_index: u32) Error!void {
         if (self.configuration.fallback_monitor_index == monitor_index) return;
@@ -349,6 +355,16 @@ const PlacementConfiguration = struct {
     monitor_id: ?MonitorId,
 };
 
+fn configurationForMonitor(
+    current: PlacementConfiguration,
+    selected_monitor: monitor.Monitor,
+) PlacementConfiguration {
+    var configuration = current;
+    configuration.fallback_monitor_index = selected_monitor.index;
+    configuration.monitor_id = selected_monitor.id;
+    return configuration;
+}
+
 fn validatePlacementConfiguration(configuration: PlacementConfiguration, monitor_rect: ?win32.RECT) Error!void {
     const rect = monitor_rect orelse return;
     _ = try geometry.validateThickness(rect, configuration.edge, configuration.thickness);
@@ -413,6 +429,27 @@ test "configuration validation rejects invalid thickness before applying it" {
 
     try std.testing.expectError(error.InvalidThickness, validatePlacementConfiguration(configuration, monitor_rect));
     try validatePlacementConfiguration(configuration, null);
+}
+
+test "monitor configuration retains a persistent ID and index fallback" {
+    const monitor_id = try MonitorId.fromUtf8("monitor-id");
+    const current = PlacementConfiguration{
+        .fallback_monitor_index = 0,
+        .edge = .bottom,
+        .thickness = 100,
+        .monitor_id = null,
+    };
+    const selected_monitor = monitor.Monitor{
+        .index = 2,
+        .rect = .{ .left = 100, .top = 0, .right = 200, .bottom = 100 },
+        .id = monitor_id,
+    };
+
+    const configuration = configurationForMonitor(current, selected_monitor);
+    try std.testing.expectEqual(@as(u32, 2), configuration.fallback_monitor_index);
+    try std.testing.expectEqualStrings("monitor-id", configuration.monitor_id.?.utf8());
+    try std.testing.expectEqual(Edge.bottom, configuration.edge);
+    try std.testing.expectEqual(@as(u32, 100), configuration.thickness);
 }
 
 test "read-only AppBar APIs expose configuration and active reservation" {

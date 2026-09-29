@@ -105,7 +105,7 @@ const Application = struct {
         const registered = if (self.app_bar) |*app_bar| app_bar.isRegistered() else false;
         const visible = if (self.app_bar) |*app_bar| app_bar.isVisible() else false;
         const allocated = if (self.app_bar) |*app_bar| app_bar.allocatedRect() else null;
-        const displayed = if (allocated) |rect| std.fmt.bufPrint(&text, "Status: {s}\r\nRegistered: {}\r\nVisible: {}\r\nEdge: {s}\r\nThickness: {} px\r\nFallback monitor: {}\r\nAllocated rect: ({}, {}, {}, {})\r\nLast result: {s}", .{ status, registered, visible, @tagName(self.selected_edge), self.selected_thickness, self.selected_monitor_index, rect.left, rect.top, rect.right, rect.bottom, self.result[0..self.result_length] }) catch "Status text unavailable" else std.fmt.bufPrint(&text, "Status: {s}\r\nRegistered: {}\r\nVisible: {}\r\nEdge: {s}\r\nThickness: {} px\r\nFallback monitor: {}\r\nAllocated rect: none\r\nLast result: {s}", .{ status, registered, visible, @tagName(self.selected_edge), self.selected_thickness, self.selected_monitor_index, self.result[0..self.result_length] }) catch "Status text unavailable";
+        const displayed = if (allocated) |rect| std.fmt.bufPrint(&text, "Status: {s}\r\nRegistered: {}\r\nVisible: {}\r\nEdge: {s}\r\nThickness: {} px\r\nMonitor: {}\r\nAllocated rect: ({}, {}, {}, {})\r\nLast result: {s}", .{ status, registered, visible, @tagName(self.selected_edge), self.selected_thickness, self.selected_monitor_index, rect.left, rect.top, rect.right, rect.bottom, self.result[0..self.result_length] }) catch "Status text unavailable" else std.fmt.bufPrint(&text, "Status: {s}\r\nRegistered: {}\r\nVisible: {}\r\nEdge: {s}\r\nThickness: {} px\r\nMonitor: {}\r\nAllocated rect: none\r\nLast result: {s}", .{ status, registered, visible, @tagName(self.selected_edge), self.selected_thickness, self.selected_monitor_index, self.result[0..self.result_length] }) catch "Status text unavailable";
         setWindowTextAscii(self.status_text[0..], displayed);
         _ = SetWindowTextW(GetDlgItem(control_window, status_control), self.status_text[0..].ptr);
     }
@@ -186,7 +186,7 @@ fn createControls(parent: windows.HWND, instance: windows.HINSTANCE) Error!void 
     try createButton(parent, instance, "Top", 132, 112, 108, 30, button_edge_top);
     try createButton(parent, instance, "Right", 248, 112, 108, 30, button_edge_right);
     try createButton(parent, instance, "Bottom", 364, 112, 108, 30, button_edge_bottom);
-    try createStatic(parent, instance, "Fallback monitor", 16, 158, 160, 20, 0);
+    try createStatic(parent, instance, "Monitor", 16, 158, 160, 20, 0);
     try createButton(parent, instance, "Previous", 16, 180, 108, 30, button_monitor_previous);
     try createButton(parent, instance, "Next", 132, 180, 108, 30, button_monitor_next);
     try createStatic(parent, instance, "Thickness", 16, 226, 120, 20, 0);
@@ -299,8 +299,8 @@ fn handleCommand(id: usize) void {
                 button_edge_top => setEdge(application, .top),
                 button_edge_right => setEdge(application, .right),
                 button_edge_bottom => setEdge(application, .bottom),
-                button_monitor_previous => setFallbackMonitor(application, false),
-                button_monitor_next => setFallbackMonitor(application, true),
+                button_monitor_previous => setMonitor(application, false),
+                button_monitor_next => setMonitor(application, true),
                 button_thickness_64 => setThickness(application, 64),
                 button_thickness_128 => setThickness(application, 128),
                 button_thickness_256 => setThickness(application, 256),
@@ -326,7 +326,7 @@ fn setEdge(application: *Application, edge: app_bar_lib.Edge) void {
     application.selected_edge = edge;
     application.setResult("Edge updated");
 }
-fn setFallbackMonitor(application: *Application, move_forward: bool) void {
+fn setMonitor(application: *Application, move_forward: bool) void {
     if (application.monitors.len == 0) {
         application.setResult("No monitors found");
         return;
@@ -334,12 +334,12 @@ fn setFallbackMonitor(application: *Application, move_forward: bool) void {
     const current: usize = application.selected_monitor_index;
     const selected: usize = if (move_forward) (current + 1) % application.monitors.len else (current + application.monitors.len - 1) % application.monitors.len;
     const app_bar = &(application.app_bar orelse return);
-    app_bar.setFallbackMonitorIndex(@intCast(selected)) catch |err| {
+    app_bar.setMonitor(.{ .index = @intCast(selected) }) catch |err| {
         application.setError(err);
         return;
     };
     application.selected_monitor_index = @intCast(selected);
-    application.setResult("Fallback monitor updated");
+    application.setResult("Monitor updated");
 }
 fn setThickness(application: *Application, thickness: u32) void {
     const app_bar = &(application.app_bar orelse return);
