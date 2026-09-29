@@ -201,7 +201,7 @@ pub const AppBar = struct {
             },
             .fullscreen_app => {
                 if (self.state != .active) return false;
-                try self.setFullscreenZOrder(message_handler.fullscreenAppIsOpening(lparam));
+                try self.setFullscreenZOrder();
                 return true;
             },
             .window_arrange => {
@@ -300,8 +300,10 @@ pub const AppBar = struct {
         _ = win32.SHAppBarMessage(win32.ABM_ACTIVATE, &app_bar_data);
     }
 
-    fn setFullscreenZOrder(self: *AppBar, is_opening: bool) Error!void {
-        const insert_after: ?WindowHandle = if (is_opening) win32.HWND_BOTTOM else null;
+    fn setFullscreenZOrder(self: *AppBar) Error!void {
+        var app_bar_data = makeAppBarData(self.window_handle, 0);
+        const taskbar_state = win32.SHAppBarMessage(win32.ABM_GETSTATE, &app_bar_data);
+        const insert_after = fullscreenInsertAfter(taskbar_state);
         const flags = win32.SWP_NOMOVE | win32.SWP_NOSIZE | win32.SWP_NOACTIVATE;
         if (!win32.SetWindowPos(self.window_handle, insert_after, 0, 0, 0, 0, flags).toBool()) return error.WindowZOrderFailed;
     }
@@ -371,6 +373,10 @@ fn makeAppBarData(window: WindowHandle, callback_message: Message) win32.APPBARD
     return .{ .cbSize = @sizeOf(win32.APPBARDATA), .hWnd = window, .uCallbackMessage = callback_message, .uEdge = 0, .rc = .{ .left = 0, .top = 0, .right = 0, .bottom = 0 }, .lParam = 0 };
 }
 
+fn fullscreenInsertAfter(taskbar_state: usize) WindowHandle {
+    return if (taskbar_state & win32.ABS_ALWAYSONTOP != 0) win32.HWND_TOPMOST else win32.HWND_BOTTOM;
+}
+
 test "APPBARDATA contains the ABM_NEW fields required by the Windows SDK" {
     const window: WindowHandle = @ptrFromInt(1);
     const callback_message: Message = 0xc000;
@@ -378,6 +384,12 @@ test "APPBARDATA contains the ABM_NEW fields required by the Windows SDK" {
     try std.testing.expectEqual(@as(u32, @sizeOf(win32.APPBARDATA)), app_bar_data.cbSize);
     try std.testing.expectEqual(window, app_bar_data.hWnd);
     try std.testing.expectEqual(callback_message, app_bar_data.uCallbackMessage);
+}
+
+test "fullscreen AppBar Z order follows the taskbar always-on-top state" {
+    try std.testing.expectEqual(win32.HWND_BOTTOM, fullscreenInsertAfter(0));
+    try std.testing.expectEqual(win32.HWND_TOPMOST, fullscreenInsertAfter(win32.ABS_ALWAYSONTOP));
+    try std.testing.expectEqual(win32.HWND_TOPMOST, fullscreenInsertAfter(win32.ABS_ALWAYSONTOP | 1));
 }
 
 test "read-only AppBar APIs expose configuration and active reservation" {

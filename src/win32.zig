@@ -46,6 +46,7 @@ pub const ABM_NEW: windows.DWORD = 0x00000000;
 pub const ABM_REMOVE: windows.DWORD = 0x00000001;
 pub const ABM_QUERYPOS: windows.DWORD = 0x00000002;
 pub const ABM_SETPOS: windows.DWORD = 0x00000003;
+pub const ABM_GETSTATE: windows.DWORD = 0x00000004;
 pub const ABM_ACTIVATE: windows.DWORD = 0x00000006;
 pub const ABM_WINDOWPOSCHANGED: windows.DWORD = 0x00000009;
 
@@ -59,6 +60,8 @@ pub const ABE_TOP: windows.UINT = 1;
 pub const ABE_RIGHT: windows.UINT = 2;
 pub const ABE_BOTTOM: windows.UINT = 3;
 
+pub const ABS_ALWAYSONTOP: usize = 0x00000002;
+
 pub const SWP_NOZORDER: windows.UINT = 0x0004;
 pub const SWP_NOACTIVATE: windows.UINT = 0x0010;
 pub const SWP_NOSIZE: windows.UINT = 0x0001;
@@ -68,6 +71,7 @@ pub const SW_HIDE: i32 = 0;
 pub const SW_SHOWNOACTIVATE: i32 = 4;
 
 pub const HWND_BOTTOM: windows.HWND = @ptrFromInt(1);
+pub const HWND_TOPMOST: windows.HWND = @ptrFromInt(std.math.maxInt(usize));
 
 pub const WA_INACTIVE: usize = 0;
 

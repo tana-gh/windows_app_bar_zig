@@ -35,7 +35,7 @@ On `WM_DISPLAYCHANGE`, the library first tries to find the monitor previously se
 
 When the AppBar window is moved or resized, `WM_WINDOWPOSCHANGED` causes the library to refresh the selected monitor, edge, and thickness. Synchronous internal repositioning does not report another `ABM_WINDOWPOSCHANGED`; `ABN_POSCHANGED` always re-queries and refreshes the AppBar position.
 
-Explorer restart recovery is implemented through the `TaskbarCreated` message. `WM_ACTIVATE` is forwarded to the shell through `ABM_ACTIVATE` without consuming the window message. `ABN_STATECHANGE` re-queries and reapplies the AppBar position so taskbar autohide setting changes do not depend solely on `ABN_POSCHANGED`; it does not expose the taskbar state. On `ABN_FULLSCREENAPP`, the AppBar moves to the bottom of the Z order while a fullscreen application is open and returns to the normal Z order when it closes. During `ABN_WINDOWARRANGE`, the library temporarily hides an AppBar that was visible before the operation and restores it without activation afterwards.
+Explorer restart recovery is implemented through the `TaskbarCreated` message. `WM_ACTIVATE` is forwarded to the shell through `ABM_ACTIVATE` without consuming the window message. `ABN_STATECHANGE` re-queries and reapplies the AppBar position so taskbar autohide setting changes do not depend solely on `ABN_POSCHANGED`; it does not expose the taskbar state. On every `ABN_FULLSCREENAPP` notification, the library re-queries the taskbar state and moves the AppBar to `HWND_TOPMOST` when the taskbar is always on top, or to `HWND_BOTTOM` otherwise. During `ABN_WINDOWARRANGE`, the library temporarily hides an AppBar that was visible before the operation and restores it without activation afterwards.
 
 ## Basic example
 
