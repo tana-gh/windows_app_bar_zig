@@ -52,20 +52,12 @@ pub fn messageAction(
 pub fn stateAfterTaskbarRestart(state: api.Status) api.Status {
     return switch (state) {
         .active => .suspended,
-        .suspended, .cleaned => state,
+        .suspended, .deinitialized => state,
     };
 }
 
-pub fn dpiFromWParam(wparam: api.WParam) u32 {
-    return @intCast((wparam >> 16) & 0xffff);
-}
-
-pub fn shouldRepositionForStateChange(state: api.Status) bool {
-    return state == .active;
-}
-
-pub fn canReapply(state: api.Status) bool {
-    return state != .cleaned;
+pub fn canRefresh(state: api.Status) bool {
+    return state != .deinitialized;
 }
 
 pub fn shouldAutomaticallyReregister(
@@ -135,13 +127,11 @@ test "display changes are forwarded without being consumed" {
     );
 }
 
-test "DPI changes are consumed and use the Y-axis DPI" {
+test "DPI changes are consumed" {
     try std.testing.expectEqual(
         MessageAction.dpi_changed,
         messageAction(0xc000, 0xc001, win32.WM_DPICHANGED, 0),
     );
-    const dpi_wparam: api.WParam = (@as(api.WParam, 144) << 16) | 120;
-    try std.testing.expectEqual(@as(u32, 144), dpiFromWParam(dpi_wparam));
 }
 
 test "activation changes are forwarded and report the active state" {
@@ -153,23 +143,17 @@ test "activation changes are forwarded and report the active state" {
     try std.testing.expectEqual(@as(api.LParam, 1), appBarActivationLParam(true));
 }
 
-test "taskbar state changes reconfigure active AppBars" {
-    try std.testing.expect(shouldRepositionForStateChange(.active));
-    try std.testing.expect(!shouldRepositionForStateChange(.suspended));
-    try std.testing.expect(!shouldRepositionForStateChange(.cleaned));
-}
-
 test "automatic re-registration excludes manually unregistered AppBars" {
     try std.testing.expect(shouldAutomaticallyReregister(.suspended, true));
     try std.testing.expect(!shouldAutomaticallyReregister(.suspended, false));
     try std.testing.expect(!shouldAutomaticallyReregister(.active, true));
-    try std.testing.expect(!shouldAutomaticallyReregister(.cleaned, true));
+    try std.testing.expect(!shouldAutomaticallyReregister(.deinitialized, true));
 }
 
-test "reapply is unavailable after cleanup" {
-    try std.testing.expect(canReapply(.active));
-    try std.testing.expect(canReapply(.suspended));
-    try std.testing.expect(!canReapply(.cleaned));
+test "refresh is unavailable after deinitialization" {
+    try std.testing.expect(canRefresh(.active));
+    try std.testing.expect(canRefresh(.suspended));
+    try std.testing.expect(!canRefresh(.deinitialized));
 }
 
 test "fullscreen AppBar notifications use the lParam opening flag" {
@@ -194,5 +178,5 @@ test "TaskbarCreated is consumed and resets only active AppBars" {
     );
     try std.testing.expectEqual(api.Status.suspended, stateAfterTaskbarRestart(.active));
     try std.testing.expectEqual(api.Status.suspended, stateAfterTaskbarRestart(.suspended));
-    try std.testing.expectEqual(api.Status.cleaned, stateAfterTaskbarRestart(.cleaned));
+    try std.testing.expectEqual(api.Status.deinitialized, stateAfterTaskbarRestart(.deinitialized));
 }

@@ -145,13 +145,8 @@ fn run(args: std.process.Args) !void {
     }
     defer _ = SetConsoleCtrlHandler(consoleControlHandler, .FALSE);
 
-    var app_bar = try app_bar_lib.AppBar.register(
-        window,
-        config.monitor,
-        config.edge,
-        config.thickness,
-    );
-    defer app_bar.cleanup();
+    var app_bar = try app_bar_lib.AppBar.register(window, config);
+    defer app_bar.deinit();
 
     active_app_bar = &app_bar;
     defer active_app_bar = null;
@@ -161,11 +156,7 @@ fn run(args: std.process.Args) !void {
     try runMessageLoop();
 }
 
-const Config = struct {
-    monitor: app_bar_lib.MonitorSelector,
-    edge: app_bar_lib.Edge,
-    thickness: u32,
-};
+const Config = app_bar_lib.AppBarConfig;
 
 fn parseArguments(args: std.process.Args) !Config {
     var iterator = try std.process.Args.Iterator.initAllocator(args, std.heap.page_allocator);
@@ -236,7 +227,7 @@ fn windowProc(
     lparam: isize,
 ) callconv(.winapi) isize {
     if (active_app_bar) |app_bar| {
-        const consumed = app_bar.handleWindowMessage(message, wparam, lparam) catch {
+        const consumed = app_bar.handleMessage(message, wparam, lparam) catch {
             PostQuitMessage(1);
             return 0;
         };

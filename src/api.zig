@@ -63,10 +63,17 @@ pub const MonitorId = struct {
     }
 };
 
-/// Selects a monitor by its current index or persistent device interface identifier.
-pub const MonitorSelector = union(enum) {
+/// Targets a monitor by its current index or persistent device interface identifier.
+pub const MonitorTarget = union(enum) {
     index: u32,
     id: MonitorId,
+};
+
+/// Describes the requested AppBar placement.
+pub const AppBarConfig = struct {
+    monitor: MonitorTarget,
+    edge: Edge,
+    thickness: u32,
 };
 
 /// Information about one monitor in EnumDisplayMonitors order.
@@ -80,7 +87,7 @@ pub const MonitorInfo = struct {
 pub const Status = enum {
     active,
     suspended,
-    cleaned,
+    deinitialized,
 };
 
 pub const Error = error{
@@ -93,6 +100,6 @@ pub const Error = error{
     InvalidPlacementRect,
     WindowPlacementFailed,
     WindowZOrderFailed,
-    AppBarCleaned,
+    AppBarDeinitialized,
     ConfigurationRollbackFailed,
 };

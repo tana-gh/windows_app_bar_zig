@@ -12,30 +12,26 @@ const LParam = api.LParam;
 const Edge = api.Edge;
 const Rect = api.Rect;
 const MonitorId = api.MonitorId;
-const MonitorSelector = api.MonitorSelector;
+const AppBarConfig = api.AppBarConfig;
 const Status = api.Status;
 const Error = api.Error;
 
 pub const AppBar = struct {
     window_handle: WindowHandle,
-    preferred_monitor_index: u32,
-    edge_value: Edge,
-    thickness_pixels: u32,
+    configuration: PlacementConfiguration,
     callback_message: Message,
     taskbar_created_message: Message,
     monitor_rect: win32.RECT,
     placement_rect: win32.RECT,
-    monitor_id: ?MonitorId,
-    window_dpi: u32,
     is_repositioning: bool,
     is_hidden_for_window_arrange: bool,
     allows_automatic_reregistration: bool,
     state: Status,
 
-    /// Registers an AppBar for a window.
-    pub fn register(window_handle: WindowHandle, monitor_selector: MonitorSelector, requested_edge: Edge, requested_thickness: u32) Error!AppBar {
-        const selected_monitor = monitor.resolveMonitorSelector(monitor_selector) orelse return error.MonitorNotFound;
-        const proposed_rect = try geometry.makeProposedRect(selected_monitor.rect, requested_edge, requested_thickness);
+    /// Registers an AppBar for a window using the requested placement configuration.
+    pub fn register(window_handle: WindowHandle, config: AppBarConfig) Error!AppBar {
+        const selected_monitor = monitor.resolveMonitorTarget(config.monitor) orelse return error.MonitorNotFound;
+        const proposed_rect = try geometry.makeProposedRect(selected_monitor.rect, config.edge, config.thickness);
         const callback_message = win32.RegisterWindowMessageW(callback_message_name.ptr);
         if (callback_message == 0) return error.CallbackMessageRegistrationFailed;
         const taskbar_created_message = win32.RegisterWindowMessageW(taskbar_created_message_name.ptr);
@@ -43,21 +39,22 @@ pub const AppBar = struct {
 
         var app_bar = AppBar{
             .window_handle = window_handle,
-            .preferred_monitor_index = selected_monitor.index,
-            .edge_value = requested_edge,
-            .thickness_pixels = requested_thickness,
+            .configuration = .{
+                .fallback_monitor_index = selected_monitor.index,
+                .edge = config.edge,
+                .thickness = config.thickness,
+                .monitor_id = selected_monitor.id,
+            },
             .callback_message = callback_message,
             .taskbar_created_message = taskbar_created_message,
             .monitor_rect = selected_monitor.rect,
             .placement_rect = proposed_rect,
-            .monitor_id = selected_monitor.id,
-            .window_dpi = 0,
             .is_repositioning = false,
             .is_hidden_for_window_arrange = false,
             .allows_automatic_reregistration = true,
             .state = .suspended,
         };
-        errdefer app_bar.cleanup();
+        errdefer app_bar.deinit();
         try app_bar.registerWithShell();
         return app_bar;
     }
@@ -68,15 +65,15 @@ pub const AppBar = struct {
     }
     /// Returns the requested edge.
     pub fn edge(self: *const AppBar) Edge {
-        return self.edge_value;
+        return self.configuration.edge;
     }
-    /// Returns the preferred zero-based monitor index.
-    pub fn preferredMonitorIndex(self: *const AppBar) u32 {
-        return self.preferred_monitor_index;
+    /// Returns the zero-based monitor index used if the monitor ID is unavailable.
+    pub fn fallbackMonitorIndex(self: *const AppBar) u32 {
+        return self.configuration.fallback_monitor_index;
     }
     /// Returns the requested thickness in physical pixels.
     pub fn thickness(self: *const AppBar) u32 {
-        return self.thickness_pixels;
+        return self.configuration.thickness;
     }
     /// Returns the current registration lifecycle state.
     pub fn status(self: *const AppBar) Status {
@@ -104,39 +101,46 @@ pub const AppBar = struct {
         return win32.IsWindowVisible(self.window_handle).toBool();
     }
 
-    /// Updates the requested edge and reapplies the AppBar position.
+    /// Updates the requested edge and refreshes the AppBar position.
     pub fn setEdge(self: *AppBar, requested_edge: Edge) Error!void {
-        if (self.edge_value == requested_edge) return;
-        try self.setConfiguration(self.preferred_monitor_index, requested_edge, self.thickness_pixels, self.monitor_id);
+        if (self.configuration.edge == requested_edge) return;
+        var configuration = self.configuration;
+        configuration.edge = requested_edge;
+        try self.setConfiguration(configuration);
     }
 
-    /// Updates the preferred monitor index and reapplies the AppBar position.
-    pub fn setPreferredMonitorIndex(self: *AppBar, monitor_index: u32) Error!void {
-        if (self.preferred_monitor_index == monitor_index) return;
-        try self.setConfiguration(monitor_index, self.edge_value, self.thickness_pixels, null);
+    /// Updates the fallback monitor index and refreshes the AppBar position.
+    pub fn setFallbackMonitorIndex(self: *AppBar, monitor_index: u32) Error!void {
+        if (self.configuration.fallback_monitor_index == monitor_index) return;
+        var configuration = self.configuration;
+        configuration.fallback_monitor_index = monitor_index;
+        configuration.monitor_id = null;
+        try self.setConfiguration(configuration);
     }
 
-    /// Updates the requested thickness in physical pixels and reapplies the AppBar position.
+    /// Updates the requested thickness in physical pixels and refreshes the AppBar position.
     pub fn setThickness(self: *AppBar, requested_thickness: u32) Error!void {
-        if (self.thickness_pixels == requested_thickness) return;
-        try self.setConfiguration(self.preferred_monitor_index, self.edge_value, requested_thickness, self.monitor_id);
+        if (self.configuration.thickness == requested_thickness) return;
+        var configuration = self.configuration;
+        configuration.thickness = requested_thickness;
+        try self.setConfiguration(configuration);
     }
 
     /// Returns a fresh candidate rectangle for the currently selected monitor.
-    pub fn proposedRect(self: *const AppBar) Error!Rect {
-        const selected_monitor = monitor.resolveMonitor(self.preferred_monitor_index, self.monitor_id) orelse return error.MonitorNotFound;
-        return monitor.rectFromWin32(try geometry.makeProposedRect(selected_monitor.rect, self.edge_value, self.thickness_pixels));
+    pub fn candidateRect(self: *const AppBar) Error!Rect {
+        const selected_monitor = monitor.resolveMonitor(self.configuration.fallback_monitor_index, self.configuration.monitor_id) orelse return error.MonitorNotFound;
+        return monitor.rectFromWin32(try geometry.makeProposedRect(selected_monitor.rect, self.configuration.edge, self.configuration.thickness));
     }
 
-    /// Returns the shell-approved rectangle while the AppBar is registered.
-    pub fn reservedRect(self: *const AppBar) ?Rect {
+    /// Returns the shell-allocated rectangle while the AppBar is registered.
+    pub fn allocatedRect(self: *const AppBar) ?Rect {
         if (self.state != .active) return null;
         return monitor.rectFromWin32(self.placement_rect);
     }
 
-    /// Re-queries, reserves, and applies the AppBar position.
-    pub fn reapply(self: *AppBar) Error!void {
-        if (!message_handler.canReapply(self.state)) return error.AppBarCleaned;
+    /// Re-resolves the monitor and updates the AppBar position.
+    pub fn refresh(self: *AppBar) Error!void {
+        if (!message_handler.canRefresh(self.state)) return error.AppBarDeinitialized;
         self.refreshDisplayConfiguration() catch |err| {
             self.unregisterFromShell();
             return err;
@@ -145,7 +149,7 @@ pub const AppBar = struct {
 
     /// Removes the AppBar registration and disables automatic re-registration.
     pub fn unregister(self: *AppBar) void {
-        if (self.state == .cleaned) return;
+        if (self.state == .deinitialized) return;
         self.restoreWindowAfterArrange();
         self.allows_automatic_reregistration = false;
         self.unregisterFromShell();
@@ -153,40 +157,32 @@ pub const AppBar = struct {
 
     /// Re-registers an AppBar that was previously unregistered.
     pub fn reregister(self: *AppBar) Error!void {
-        if (!message_handler.canReapply(self.state)) return error.AppBarCleaned;
+        if (!message_handler.canRefresh(self.state)) return error.AppBarDeinitialized;
         self.allows_automatic_reregistration = true;
         if (self.state == .active) return;
         try self.refreshDisplayConfiguration();
     }
 
-    /// Removes the AppBar registration if it is active.
-    pub fn cleanup(self: *AppBar) void {
+    /// Releases the AppBar registration and makes this value unusable.
+    pub fn deinit(self: *AppBar) void {
         self.restoreWindowAfterArrange();
         self.unregisterFromShell();
         self.allows_automatic_reregistration = false;
-        self.state = .cleaned;
+        self.state = .deinitialized;
     }
 
-    /// Handles a window message and reports whether it was consumed.
-    pub fn handleWindowMessage(self: *AppBar, message: Message, wparam: WParam, lparam: LParam) Error!bool {
+    /// Handles a Windows message and reports whether it was consumed.
+    pub fn handleMessage(self: *AppBar, message: Message, wparam: WParam, lparam: LParam) Error!bool {
         switch (message_handler.messageAction(self.callback_message, self.taskbar_created_message, message, wparam)) {
             .none => return false,
             .taskbar_created => {
-                if (self.state == .cleaned) return false;
-                try self.restoreAfterTaskbarRestart();
-                return true;
+                return self.restoreAfterTaskbarRestartIfUsable();
             },
             .display_changed => {
-                if (self.state == .cleaned) return false;
-                try self.reapply();
+                _ = try self.refreshIfUsable();
                 return false;
             },
-            .dpi_changed => {
-                if (self.state == .cleaned) return false;
-                self.window_dpi = message_handler.dpiFromWParam(wparam);
-                try self.reapply();
-                return true;
-            },
+            .dpi_changed => return self.refreshIfUsable(),
             .activation_changed => {
                 if (self.state == .active) self.notifyActivation(wparam != win32.WA_INACTIVE);
                 return false;
@@ -195,23 +191,12 @@ pub const AppBar = struct {
                 if (self.state != .active or self.is_hidden_for_window_arrange or self.is_repositioning) return false;
                 var app_bar_data = makeAppBarData(self.window_handle, 0);
                 _ = win32.SHAppBarMessage(win32.ABM_WINDOWPOSCHANGED, &app_bar_data);
-                try self.reapply();
+                try self.refresh();
                 return false;
             },
-            .position_changed => {
+            .position_changed, .state_changed => {
                 if (self.state != .active) return false;
-                self.reposition() catch |err| {
-                    self.unregisterFromShell();
-                    return err;
-                };
-                return true;
-            },
-            .state_changed => {
-                if (!message_handler.shouldRepositionForStateChange(self.state)) return false;
-                self.reposition() catch |err| {
-                    self.unregisterFromShell();
-                    return err;
-                };
+                try self.repositionOrSuspend();
                 return true;
             },
             .fullscreen_app => {
@@ -243,26 +228,23 @@ pub const AppBar = struct {
         self.state = .suspended;
     }
 
-    fn setConfiguration(self: *AppBar, monitor_index: u32, requested_edge: Edge, requested_thickness: u32, requested_monitor_id: ?MonitorId) Error!void {
-        if (!message_handler.canReapply(self.state)) return error.AppBarCleaned;
+    fn setConfiguration(self: *AppBar, configuration: PlacementConfiguration) Error!void {
+        if (!message_handler.canRefresh(self.state)) return error.AppBarDeinitialized;
         const previous = ConfigurationSnapshot.fromAppBar(self);
-        self.preferred_monitor_index = monitor_index;
-        self.edge_value = requested_edge;
-        self.thickness_pixels = requested_thickness;
-        self.monitor_id = requested_monitor_id;
-        self.reapply() catch |err| {
+        self.configuration = configuration;
+        self.refresh() catch |err| {
             previous.restore(self);
-            if (previous.state == .active) self.reapply() catch return error.ConfigurationRollbackFailed;
+            if (previous.was_registered) self.refresh() catch return error.ConfigurationRollbackFailed;
             return err;
         };
     }
 
     fn refreshDisplayConfiguration(self: *AppBar) Error!void {
-        const selected_monitor = monitor.resolveMonitor(self.preferred_monitor_index, self.monitor_id) orelse {
+        const selected_monitor = monitor.resolveMonitor(self.configuration.fallback_monitor_index, self.configuration.monitor_id) orelse {
             self.unregisterFromShell();
             return;
         };
-        self.monitor_id = selected_monitor.id;
+        self.configuration.monitor_id = selected_monitor.id;
         self.monitor_rect = selected_monitor.rect;
         if (message_handler.shouldAutomaticallyReregister(self.state, self.allows_automatic_reregistration)) {
             try self.registerWithShell();
@@ -273,24 +255,43 @@ pub const AppBar = struct {
 
     fn restoreAfterTaskbarRestart(self: *AppBar) Error!void {
         self.state = message_handler.stateAfterTaskbarRestart(self.state);
-        try self.reapply();
+        try self.refresh();
+    }
+
+    fn refreshIfUsable(self: *AppBar) Error!bool {
+        if (self.state == .deinitialized) return false;
+        try self.refresh();
+        return true;
+    }
+
+    fn restoreAfterTaskbarRestartIfUsable(self: *AppBar) Error!bool {
+        if (self.state == .deinitialized) return false;
+        try self.restoreAfterTaskbarRestart();
+        return true;
+    }
+
+    fn repositionOrSuspend(self: *AppBar) Error!void {
+        self.reposition() catch |err| {
+            self.unregisterFromShell();
+            return err;
+        };
     }
 
     fn reposition(self: *AppBar) Error!void {
         if (self.is_repositioning) return;
         self.is_repositioning = true;
         defer self.is_repositioning = false;
-        const proposed_rect = try geometry.makeProposedRect(self.monitor_rect, self.edge_value, self.thickness_pixels);
+        const proposed_rect = try geometry.makeProposedRect(self.monitor_rect, self.configuration.edge, self.configuration.thickness);
         self.queryPosition(proposed_rect);
         try self.applyPosition();
     }
 
     fn queryPosition(self: *AppBar, proposed_rect: win32.RECT) void {
         var app_bar_data = makeAppBarData(self.window_handle, self.callback_message);
-        app_bar_data.uEdge = @intFromEnum(self.edge_value);
+        app_bar_data.uEdge = @intFromEnum(self.configuration.edge);
         app_bar_data.rc = proposed_rect;
         _ = win32.SHAppBarMessage(win32.ABM_QUERYPOS, &app_bar_data);
-        self.placement_rect = geometry.preserveThickness(app_bar_data.rc, self.edge_value, self.thickness_pixels);
+        self.placement_rect = geometry.preserveThickness(app_bar_data.rc, self.configuration.edge, self.configuration.thickness);
     }
 
     fn notifyActivation(self: *AppBar, is_active: bool) void {
@@ -324,7 +325,7 @@ pub const AppBar = struct {
 
     fn applyPosition(self: *AppBar) Error!void {
         var app_bar_data = makeAppBarData(self.window_handle, self.callback_message);
-        app_bar_data.uEdge = @intFromEnum(self.edge_value);
+        app_bar_data.uEdge = @intFromEnum(self.configuration.edge);
         app_bar_data.rc = self.placement_rect;
         _ = win32.SHAppBarMessage(win32.ABM_SETPOS, &app_bar_data);
         self.placement_rect = app_bar_data.rc;
@@ -334,26 +335,32 @@ pub const AppBar = struct {
     }
 };
 
+const PlacementConfiguration = struct {
+    fallback_monitor_index: u32,
+    edge: Edge,
+    thickness: u32,
+    monitor_id: ?MonitorId,
+};
+
 const ConfigurationSnapshot = struct {
-    preferred_monitor_index: u32,
-    edge_value: Edge,
-    thickness_pixels: u32,
+    configuration: PlacementConfiguration,
     monitor_rect: win32.RECT,
     placement_rect: win32.RECT,
-    monitor_id: ?MonitorId,
-    state: Status,
+    was_registered: bool,
 
     fn fromAppBar(app_bar: *const AppBar) ConfigurationSnapshot {
-        return .{ .preferred_monitor_index = app_bar.preferred_monitor_index, .edge_value = app_bar.edge_value, .thickness_pixels = app_bar.thickness_pixels, .monitor_rect = app_bar.monitor_rect, .placement_rect = app_bar.placement_rect, .monitor_id = app_bar.monitor_id, .state = app_bar.state };
+        return .{
+            .configuration = app_bar.configuration,
+            .monitor_rect = app_bar.monitor_rect,
+            .placement_rect = app_bar.placement_rect,
+            .was_registered = app_bar.state == .active,
+        };
     }
 
     fn restore(self: ConfigurationSnapshot, app_bar: *AppBar) void {
-        app_bar.preferred_monitor_index = self.preferred_monitor_index;
-        app_bar.edge_value = self.edge_value;
-        app_bar.thickness_pixels = self.thickness_pixels;
+        app_bar.configuration = self.configuration;
         app_bar.monitor_rect = self.monitor_rect;
         app_bar.placement_rect = self.placement_rect;
-        app_bar.monitor_id = self.monitor_id;
     }
 };
 
@@ -378,15 +385,16 @@ test "read-only AppBar APIs expose configuration and active reservation" {
     const placement_rect = win32.RECT{ .left = -20, .top = 10, .right = 180, .bottom = 110 };
     const app_bar = AppBar{
         .window_handle = window,
-        .preferred_monitor_index = 2,
-        .edge_value = .right,
-        .thickness_pixels = 200,
+        .configuration = .{
+            .fallback_monitor_index = 2,
+            .edge = .right,
+            .thickness = 200,
+            .monitor_id = null,
+        },
         .callback_message = 0xc000,
         .taskbar_created_message = 0xc001,
         .monitor_rect = .{ .left = 0, .top = 0, .right = 1920, .bottom = 1080 },
         .placement_rect = placement_rect,
-        .monitor_id = null,
-        .window_dpi = 0,
         .is_repositioning = false,
         .is_hidden_for_window_arrange = false,
         .allows_automatic_reregistration = true,
@@ -394,37 +402,38 @@ test "read-only AppBar APIs expose configuration and active reservation" {
     };
     try std.testing.expectEqual(window, app_bar.window());
     try std.testing.expectEqual(Edge.right, app_bar.edge());
-    try std.testing.expectEqual(@as(u32, 2), app_bar.preferredMonitorIndex());
+    try std.testing.expectEqual(@as(u32, 2), app_bar.fallbackMonitorIndex());
     try std.testing.expectEqual(@as(u32, 200), app_bar.thickness());
     try std.testing.expectEqual(Status.active, app_bar.status());
     try std.testing.expect(app_bar.isRegistered());
-    try std.testing.expectEqual(Rect{ .left = -20, .top = 10, .right = 180, .bottom = 110 }, app_bar.reservedRect().?);
+    try std.testing.expectEqual(Rect{ .left = -20, .top = 10, .right = 180, .bottom = 110 }, app_bar.allocatedRect().?);
 }
 
 test "configuration snapshots restore the previous AppBar settings" {
     var app_bar = AppBar{
         .window_handle = @ptrFromInt(1),
-        .preferred_monitor_index = 1,
-        .edge_value = .left,
-        .thickness_pixels = 120,
+        .configuration = .{
+            .fallback_monitor_index = 1,
+            .edge = .left,
+            .thickness = 120,
+            .monitor_id = null,
+        },
         .callback_message = 0xc000,
         .taskbar_created_message = 0xc001,
         .monitor_rect = .{ .left = 0, .top = 0, .right = 100, .bottom = 100 },
         .placement_rect = .{ .left = 0, .top = 0, .right = 100, .bottom = 100 },
-        .monitor_id = null,
-        .window_dpi = 0,
         .is_repositioning = false,
         .is_hidden_for_window_arrange = false,
         .allows_automatic_reregistration = true,
         .state = .active,
     };
     const snapshot = ConfigurationSnapshot.fromAppBar(&app_bar);
-    app_bar.preferred_monitor_index = 2;
-    app_bar.edge_value = .bottom;
-    app_bar.thickness_pixels = 200;
+    app_bar.configuration.fallback_monitor_index = 2;
+    app_bar.configuration.edge = .bottom;
+    app_bar.configuration.thickness = 200;
     app_bar.monitor_rect.right = 200;
     snapshot.restore(&app_bar);
-    try std.testing.expectEqual(@as(u32, 1), app_bar.preferredMonitorIndex());
+    try std.testing.expectEqual(@as(u32, 1), app_bar.fallbackMonitorIndex());
     try std.testing.expectEqual(Edge.left, app_bar.edge());
     try std.testing.expectEqual(@as(u32, 120), app_bar.thickness());
     try std.testing.expectEqual(@as(i32, 100), app_bar.monitor_rect.right);
@@ -433,25 +442,26 @@ test "configuration snapshots restore the previous AppBar settings" {
 test "reserved rectangle is unavailable while the AppBar is not active" {
     var app_bar = AppBar{
         .window_handle = @ptrFromInt(1),
-        .preferred_monitor_index = 0,
-        .edge_value = .bottom,
-        .thickness_pixels = 100,
+        .configuration = .{
+            .fallback_monitor_index = 0,
+            .edge = .bottom,
+            .thickness = 100,
+            .monitor_id = null,
+        },
         .callback_message = 0xc000,
         .taskbar_created_message = 0xc001,
         .monitor_rect = .{ .left = 0, .top = 0, .right = 100, .bottom = 100 },
         .placement_rect = .{ .left = 0, .top = 0, .right = 100, .bottom = 100 },
-        .monitor_id = null,
-        .window_dpi = 0,
         .is_repositioning = false,
         .is_hidden_for_window_arrange = false,
         .allows_automatic_reregistration = true,
         .state = .suspended,
     };
-    try std.testing.expect(app_bar.reservedRect() == null);
+    try std.testing.expect(app_bar.allocatedRect() == null);
     try std.testing.expectEqual(Status.suspended, app_bar.status());
     try std.testing.expect(!app_bar.isRegistered());
-    app_bar.state = .cleaned;
-    try std.testing.expect(app_bar.reservedRect() == null);
-    try std.testing.expectEqual(Status.cleaned, app_bar.status());
+    app_bar.state = .deinitialized;
+    try std.testing.expect(app_bar.allocatedRect() == null);
+    try std.testing.expectEqual(Status.deinitialized, app_bar.status());
     try std.testing.expect(!app_bar.isRegistered());
 }

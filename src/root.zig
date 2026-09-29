@@ -2,7 +2,7 @@ const builtin = @import("builtin");
 const std = @import("std");
 const api = @import("api.zig");
 const app_bar = @import("app_bar.zig");
-const helper = @import("helper.zig");
+const monitor = @import("monitor.zig");
 const win32 = @import("win32.zig");
 
 comptime {
@@ -18,21 +18,21 @@ pub const LParam = api.LParam;
 pub const Edge = api.Edge;
 pub const Rect = api.Rect;
 pub const MonitorId = api.MonitorId;
-pub const MonitorSelector = api.MonitorSelector;
+pub const MonitorTarget = api.MonitorTarget;
 pub const MonitorInfo = api.MonitorInfo;
+pub const AppBarConfig = api.AppBarConfig;
 pub const Status = api.Status;
 pub const Error = api.Error;
 pub const AppBar = app_bar.AppBar;
 
 pub fn enumerateMonitors(allocator: std.mem.Allocator) std.mem.Allocator.Error![]MonitorInfo {
-    return helper.enumerateMonitors(allocator);
+    return monitor.enumerateMonitors(allocator);
 }
 
 test {
     _ = @import("api.zig");
     _ = @import("app_bar.zig");
     _ = @import("geometry.zig");
-    _ = @import("helper.zig");
     _ = @import("message.zig");
     _ = @import("monitor.zig");
     _ = @import("win32.zig");

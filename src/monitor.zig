@@ -8,10 +8,14 @@ pub const Monitor = struct {
     id: ?api.MonitorId,
 };
 
-const MonitorSearch = struct {
-    target: api.MonitorSelector,
+const MonitorResolution = struct {
+    preferred_index: ?u32,
+    previous_id: ?api.MonitorId,
+    falls_back_to_first: bool,
     next_index: u32 = 0,
-    monitor: ?Monitor = null,
+    first_monitor: ?Monitor = null,
+    preferred_monitor: ?Monitor = null,
+    identified_monitor: ?Monitor = null,
 };
 
 const MonitorEnumeration = struct {
@@ -20,7 +24,7 @@ const MonitorEnumeration = struct {
     allocation_failed: bool = false,
 };
 
-/// Enumerates monitors in the zero-based order used by MonitorSelector.index.
+/// Enumerates monitors in the zero-based order used by MonitorTarget.index.
 /// The caller owns the returned slice and must free it with allocator.
 pub fn enumerateMonitors(allocator: std.mem.Allocator) std.mem.Allocator.Error![]api.MonitorInfo {
     var monitors = std.array_list.Managed(api.MonitorInfo).init(allocator);
@@ -39,20 +43,15 @@ pub fn enumerateMonitors(allocator: std.mem.Allocator) std.mem.Allocator.Error![
     return monitors.toOwnedSlice();
 }
 
-pub fn resolveMonitorSelector(selector: api.MonitorSelector) ?Monitor {
-    return switch (selector) {
-        .index => |index| resolveMonitor(index, null),
-        .id => |id| findMonitorById(id),
+pub fn resolveMonitorTarget(target: api.MonitorTarget) ?Monitor {
+    return switch (target) {
+        .index => |index| findMonitor(index, null, true),
+        .id => |id| findMonitor(null, id, false),
     };
 }
 
 pub fn resolveMonitor(preferred_index: u32, previous_id: ?api.MonitorId) ?Monitor {
-    if (previous_id) |id| {
-        if (findMonitorById(id)) |monitor| {
-            return monitor;
-        }
-    }
-    return findMonitorByIndex(preferred_index) orelse findMonitorByIndex(0);
+    return findMonitor(preferred_index, previous_id, true);
 }
 
 pub fn rectFromWin32(rect: win32.RECT) api.Rect {
@@ -64,26 +63,27 @@ pub fn rectFromWin32(rect: win32.RECT) api.Rect {
     };
 }
 
-fn findMonitorById(id: api.MonitorId) ?Monitor {
-    var search = MonitorSearch{ .target = .{ .id = id } };
+fn findMonitor(
+    preferred_index: ?u32,
+    previous_id: ?api.MonitorId,
+    falls_back_to_first: bool,
+) ?Monitor {
+    var resolution = MonitorResolution{
+        .preferred_index = preferred_index,
+        .previous_id = previous_id,
+        .falls_back_to_first = falls_back_to_first,
+    };
     _ = win32.EnumDisplayMonitors(
         null,
         null,
         findMonitorCallback,
-        @bitCast(@intFromPtr(&search)),
+        @bitCast(@intFromPtr(&resolution)),
     );
-    return search.monitor;
-}
-
-fn findMonitorByIndex(index: u32) ?Monitor {
-    var search = MonitorSearch{ .target = .{ .index = index } };
-    _ = win32.EnumDisplayMonitors(
-        null,
-        null,
-        findMonitorCallback,
-        @bitCast(@intFromPtr(&search)),
+    return selectMonitor(
+        resolution.identified_monitor,
+        resolution.preferred_monitor,
+        if (resolution.falls_back_to_first) resolution.first_monitor else null,
     );
-    return search.monitor;
 }
 
 fn findMonitorCallback(
@@ -92,28 +92,35 @@ fn findMonitorCallback(
     monitor_rect: *win32.RECT,
     data: api.LParam,
 ) callconv(.winapi) std.os.windows.BOOL {
-    const search: *MonitorSearch = @ptrFromInt(@as(usize, @bitCast(data)));
-    if (search.next_index == std.math.maxInt(u32)) {
+    const resolution: *MonitorResolution = @ptrFromInt(@as(usize, @bitCast(data)));
+    if (resolution.next_index == std.math.maxInt(u32)) {
         return .FALSE;
     }
-    const monitor = monitorFromHandle(monitor_handle, monitor_rect.*, search.next_index);
-    search.next_index += 1;
+    const index = resolution.next_index;
+    resolution.next_index += 1;
+    const current_monitor = monitorFromHandle(
+        monitor_handle,
+        monitor_rect.*,
+        index,
+        shouldLoadMonitorId(resolution, index),
+    );
 
-    switch (search.target) {
-        .index => |index| {
-            if (monitor.index == index) {
-                search.monitor = monitor;
+    if (resolution.first_monitor == null) {
+        resolution.first_monitor = current_monitor;
+    }
+    if (resolution.preferred_index) |preferred_index| {
+        if (index == preferred_index) {
+            resolution.preferred_monitor = current_monitor;
+            if (resolution.previous_id == null) return .FALSE;
+        }
+    }
+    if (resolution.previous_id) |previous_id| {
+        if (current_monitor.id) |monitor_id| {
+            if (monitorIdsEqual(monitor_id, previous_id)) {
+                resolution.identified_monitor = current_monitor;
                 return .FALSE;
             }
-        },
-        .id => |id| {
-            if (monitor.id) |monitor_id| {
-                if (monitorIdsEqual(monitor_id, id)) {
-                    search.monitor = monitor;
-                    return .FALSE;
-                }
-            }
-        },
+        }
     }
     return .TRUE;
 }
@@ -128,7 +135,7 @@ fn enumerateMonitorCallback(
     if (enumeration.next_index == std.math.maxInt(u32)) {
         return .FALSE;
     }
-    const monitor = monitorFromHandle(monitor_handle, monitor_rect.*, enumeration.next_index);
+    const monitor = monitorFromHandle(monitor_handle, monitor_rect.*, enumeration.next_index, true);
     enumeration.next_index += 1;
     enumeration.monitors.append(.{
         .index = monitor.index,
@@ -141,11 +148,23 @@ fn enumerateMonitorCallback(
     return .TRUE;
 }
 
-fn monitorFromHandle(monitor_handle: win32.HMONITOR, rect: win32.RECT, index: u32) Monitor {
+fn shouldLoadMonitorId(resolution: *const MonitorResolution, index: u32) bool {
+    if (resolution.previous_id != null or resolution.first_monitor == null) {
+        return true;
+    }
+    return if (resolution.preferred_index) |preferred_index| index == preferred_index else false;
+}
+
+fn monitorFromHandle(
+    monitor_handle: win32.HMONITOR,
+    rect: win32.RECT,
+    index: u32,
+    load_id: bool,
+) Monitor {
     return .{
         .index = index,
         .rect = rect,
-        .id = getMonitorId(monitor_handle),
+        .id = if (load_id) getMonitorId(monitor_handle) else null,
     };
 }
 
@@ -199,46 +218,55 @@ fn monitorIdsEqual(first: api.MonitorId, second: api.MonitorId) bool {
     return std.mem.eql(u8, first.utf8(), second.utf8());
 }
 
-fn selectMonitorFromSlice(
-    monitors: []const Monitor,
-    preferred_index: u32,
-    previous_id: ?api.MonitorId,
+fn selectMonitor(
+    identified_monitor: ?Monitor,
+    preferred_monitor: ?Monitor,
+    first_monitor: ?Monitor,
 ) ?Monitor {
-    if (previous_id) |id| {
-        for (monitors) |monitor| {
-            if (monitor.id) |monitor_id| {
-                if (monitorIdsEqual(monitor_id, id)) {
-                    return monitor;
-                }
-            }
-        }
-    }
-    if (preferred_index < monitors.len) {
-        return monitors[preferred_index];
-    }
-    if (monitors.len != 0) {
-        return monitors[0];
-    }
-    return null;
+    return identified_monitor orelse preferred_monitor orelse first_monitor;
 }
 
 test "monitor selection prioritizes identity before index fallbacks" {
     const first_id = try api.MonitorId.fromUtf8("first");
     const second_id = try api.MonitorId.fromUtf8("second");
-    const monitors = [_]Monitor{
-        .{ .index = 0, .rect = .{ .left = 0, .top = 0, .right = 100, .bottom = 100 }, .id = first_id },
-        .{ .index = 1, .rect = .{ .left = 100, .top = 0, .right = 200, .bottom = 100 }, .id = second_id },
+    const first_monitor = Monitor{
+        .index = 0,
+        .rect = .{ .left = 0, .top = 0, .right = 100, .bottom = 100 },
+        .id = first_id,
+    };
+    const preferred_monitor = Monitor{
+        .index = 1,
+        .rect = .{ .left = 100, .top = 0, .right = 200, .bottom = 100 },
+        .id = second_id,
     };
 
-    const identity_match = selectMonitorFromSlice(&monitors, 0, second_id).?;
+    const identity_match = selectMonitor(preferred_monitor, first_monitor, null).?;
     try std.testing.expectEqual(@as(i32, 100), identity_match.rect.left);
     try std.testing.expectEqual(@as(u32, 1), identity_match.index);
 
-    const preferred_index_match = selectMonitorFromSlice(&monitors, 1, null).?;
+    const preferred_index_match = selectMonitor(null, preferred_monitor, first_monitor).?;
     try std.testing.expectEqual(@as(i32, 100), preferred_index_match.rect.left);
 
-    const zero_index_fallback = selectMonitorFromSlice(&monitors, 9, null).?;
+    const zero_index_fallback = selectMonitor(null, null, first_monitor).?;
     try std.testing.expectEqual(@as(i32, 0), zero_index_fallback.rect.left);
 
-    try std.testing.expect(selectMonitorFromSlice(&.{}, 0, null) == null);
+    try std.testing.expect(selectMonitor(null, null, null) == null);
+}
+
+test "index resolution loads monitor IDs only for retained candidates" {
+    var resolution = MonitorResolution{
+        .preferred_index = 2,
+        .previous_id = null,
+        .falls_back_to_first = true,
+    };
+    try std.testing.expect(shouldLoadMonitorId(&resolution, 0));
+    resolution.first_monitor = .{
+        .index = 0,
+        .rect = .{ .left = 0, .top = 0, .right = 100, .bottom = 100 },
+        .id = null,
+    };
+    try std.testing.expect(!shouldLoadMonitorId(&resolution, 1));
+    try std.testing.expect(shouldLoadMonitorId(&resolution, 2));
+    resolution.previous_id = try api.MonitorId.fromUtf8("previous");
+    try std.testing.expect(shouldLoadMonitorId(&resolution, 3));
 }
