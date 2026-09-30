@@ -37,7 +37,7 @@ const button_refresh = 140;
 const button_unregister = 141;
 const button_reregister = 142;
 const button_detach = 143;
-const button_register = 144;
+const button_attach = 144;
 const status_control = 200;
 
 const Error = error{ InvalidArguments, WindowClassRegistrationFailed, CursorLoadFailed, WindowCreationFailed, ControlCreationFailed, ConsoleHandlerRegistrationFailed, MessageLoopFailed };
@@ -70,9 +70,9 @@ const Application = struct {
         };
         self.result_length = text.len;
     }
-    fn registerAppBar(self: *Application) void {
+    fn attachAppBar(self: *Application) void {
         if (self.has_app_bar) {
-            self.setResult("Already registered");
+            self.setResult("Already attached");
             self.updateControls();
             return;
         }
@@ -82,7 +82,7 @@ const Application = struct {
             return;
         };
         self.has_app_bar = true;
-        self.setResult("Registered");
+        self.setResult("Attached");
         self.updateControls();
     }
     fn detachAppBar(self: *Application) void {
@@ -90,7 +90,7 @@ const Application = struct {
             self.app_bar.detach();
             self.has_app_bar = false;
             self.setResult("Detached");
-        } else self.setResult("No AppBar is registered");
+        } else self.setResult("No AppBar is attached");
         self.updateControls();
     }
     fn updateControls(self: *Application) void {
@@ -98,7 +98,7 @@ const Application = struct {
         const has_app_bar = self.has_app_bar;
         const ids = [_]i32{ button_show, button_hide, button_edge_left, button_edge_top, button_edge_right, button_edge_bottom, button_monitor_previous, button_monitor_next, button_thickness_64, button_thickness_128, button_thickness_256, button_thickness_320, button_refresh, button_unregister, button_reregister, button_detach };
         for (ids) |id| _ = EnableWindow(GetDlgItem(control_window, id), if (has_app_bar) .TRUE else .FALSE);
-        _ = EnableWindow(GetDlgItem(control_window, button_register), if (has_app_bar) .FALSE else .TRUE);
+        _ = EnableWindow(GetDlgItem(control_window, button_attach), if (has_app_bar) .FALSE else .TRUE);
         self.updateStatusText(control_window);
     }
     fn updateStatusText(self: *Application, control_window: windows.HWND) void {
@@ -156,7 +156,7 @@ fn run(args: std.process.Args) !void {
     defer application.detachAppBar();
     active_application = &application;
     defer active_application = null;
-    application.registerAppBar();
+    application.attachAppBar();
     const control_window = try createControlWindow(instance, &application);
     application.control_window = control_window;
     defer _ = DestroyWindow(control_window);
@@ -182,25 +182,25 @@ fn createControls(parent: windows.HWND, instance: windows.HINSTANCE) Error!void 
     try createButton(parent, instance, "Show", 16, 46, 108, 30, button_show);
     try createButton(parent, instance, "Hide", 132, 46, 108, 30, button_hide);
     try createButton(parent, instance, "Refresh", 248, 46, 108, 30, button_refresh);
-    try createButton(parent, instance, "Unregister", 364, 46, 108, 30, button_unregister);
-    try createStatic(parent, instance, "Edge", 16, 90, 80, 20, 0);
-    try createButton(parent, instance, "Left", 16, 112, 108, 30, button_edge_left);
-    try createButton(parent, instance, "Top", 132, 112, 108, 30, button_edge_top);
-    try createButton(parent, instance, "Right", 248, 112, 108, 30, button_edge_right);
-    try createButton(parent, instance, "Bottom", 364, 112, 108, 30, button_edge_bottom);
-    try createStatic(parent, instance, "Monitor", 16, 158, 160, 20, 0);
-    try createButton(parent, instance, "Previous", 16, 180, 108, 30, button_monitor_previous);
-    try createButton(parent, instance, "Next", 132, 180, 108, 30, button_monitor_next);
-    try createStatic(parent, instance, "Thickness", 16, 226, 120, 20, 0);
-    try createButton(parent, instance, "64 px", 16, 248, 108, 30, button_thickness_64);
-    try createButton(parent, instance, "128 px", 132, 248, 108, 30, button_thickness_128);
-    try createButton(parent, instance, "256 px", 248, 248, 108, 30, button_thickness_256);
-    try createButton(parent, instance, "320 px", 364, 248, 108, 30, button_thickness_320);
-    try createButton(parent, instance, "Reregister", 16, 302, 108, 30, button_reregister);
-    try createButton(parent, instance, "Detach", 132, 302, 108, 30, button_detach);
-    try createButton(parent, instance, "Register", 248, 302, 108, 30, button_register);
-    try createStatic(parent, instance, "State", 16, 350, 80, 20, 0);
-    try createStatic(parent, instance, "", 16, 372, 456, 142, status_control);
+    try createButton(parent, instance, "Unregister", 16, 84, 108, 30, button_unregister);
+    try createButton(parent, instance, "Reregister", 132, 84, 108, 30, button_reregister);
+    try createButton(parent, instance, "Detach", 248, 84, 108, 30, button_detach);
+    try createButton(parent, instance, "Attach", 364, 84, 108, 30, button_attach);
+    try createStatic(parent, instance, "Edge", 16, 128, 80, 20, 0);
+    try createButton(parent, instance, "Left", 16, 150, 108, 30, button_edge_left);
+    try createButton(parent, instance, "Top", 132, 150, 108, 30, button_edge_top);
+    try createButton(parent, instance, "Right", 248, 150, 108, 30, button_edge_right);
+    try createButton(parent, instance, "Bottom", 364, 150, 108, 30, button_edge_bottom);
+    try createStatic(parent, instance, "Monitor", 16, 196, 160, 20, 0);
+    try createButton(parent, instance, "Previous", 16, 218, 108, 30, button_monitor_previous);
+    try createButton(parent, instance, "Next", 132, 218, 108, 30, button_monitor_next);
+    try createStatic(parent, instance, "Thickness", 16, 264, 120, 20, 0);
+    try createButton(parent, instance, "64 px", 16, 286, 108, 30, button_thickness_64);
+    try createButton(parent, instance, "128 px", 132, 286, 108, 30, button_thickness_128);
+    try createButton(parent, instance, "256 px", 248, 286, 108, 30, button_thickness_256);
+    try createButton(parent, instance, "320 px", 364, 286, 108, 30, button_thickness_320);
+    try createStatic(parent, instance, "State", 16, 340, 80, 20, 0);
+    try createStatic(parent, instance, "", 16, 362, 456, 142, status_control);
 }
 fn createButton(parent: windows.HWND, instance: windows.HINSTANCE, comptime label: []const u8, x: i32, y: i32, width: i32, height: i32, id: usize) Error!void {
     const text = std.unicode.utf8ToUtf16LeStringLiteral(label);
@@ -272,7 +272,7 @@ fn controlWindowProc(window: windows.HWND, message: windows.UINT, wparam: usize,
 fn handleCommand(id: usize) void {
     const application = active_application orelse return;
     switch (id) {
-        button_register => application.registerAppBar(),
+        button_attach => application.attachAppBar(),
         button_detach => application.detachAppBar(),
         else => {
             if (!application.has_app_bar) return;
