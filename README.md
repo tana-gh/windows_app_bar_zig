@@ -1,4 +1,4 @@
-# zig_windows_app_bar
+# windows_app_bar
 
 A Windows-only Zig wrapper for the Win32 AppBar API.
 
