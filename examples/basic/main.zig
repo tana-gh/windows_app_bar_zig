@@ -36,7 +36,7 @@ const button_thickness_320 = 133;
 const button_refresh = 140;
 const button_unregister = 141;
 const button_reregister = 142;
-const button_deinit = 143;
+const button_detach = 143;
 const button_register = 144;
 const status_control = 200;
 
@@ -46,7 +46,8 @@ const Config = app_bar_lib.AppBarConfig;
 const Application = struct {
     app_bar_window: windows.HWND,
     control_window: ?windows.HWND = null,
-    app_bar: ?app_bar_lib.AppBar = null,
+    app_bar: app_bar_lib.AppBarBinding = .{},
+    has_app_bar: bool = false,
     monitors: []app_bar_lib.MonitorInfo,
     selected_monitor_index: u32,
     selected_edge: app_bar_lib.Edge,
@@ -70,41 +71,42 @@ const Application = struct {
         self.result_length = text.len;
     }
     fn registerAppBar(self: *Application) void {
-        if (self.app_bar != null) {
+        if (self.has_app_bar) {
             self.setResult("Already registered");
             self.updateControls();
             return;
         }
-        self.app_bar = app_bar_lib.AppBar.register(self.app_bar_window, self.initialConfig()) catch |err| {
+        self.app_bar.attach(self.app_bar_window, self.initialConfig()) catch |err| {
             self.setError(err);
             self.updateControls();
             return;
         };
+        self.has_app_bar = true;
         self.setResult("Registered");
         self.updateControls();
     }
-    fn deinitAppBar(self: *Application) void {
-        if (self.app_bar) |*app_bar| {
-            app_bar.deinit();
-            self.app_bar = null;
-            self.setResult("Deinitialized");
+    fn detachAppBar(self: *Application) void {
+        if (self.has_app_bar) {
+            self.app_bar.detach();
+            self.has_app_bar = false;
+            self.setResult("Detached");
         } else self.setResult("No AppBar is registered");
         self.updateControls();
     }
     fn updateControls(self: *Application) void {
         const control_window = self.control_window orelse return;
-        const has_app_bar = self.app_bar != null;
-        const ids = [_]i32{ button_show, button_hide, button_edge_left, button_edge_top, button_edge_right, button_edge_bottom, button_monitor_previous, button_monitor_next, button_thickness_64, button_thickness_128, button_thickness_256, button_thickness_320, button_refresh, button_unregister, button_reregister, button_deinit };
+        const has_app_bar = self.has_app_bar;
+        const ids = [_]i32{ button_show, button_hide, button_edge_left, button_edge_top, button_edge_right, button_edge_bottom, button_monitor_previous, button_monitor_next, button_thickness_64, button_thickness_128, button_thickness_256, button_thickness_320, button_refresh, button_unregister, button_reregister, button_detach };
         for (ids) |id| _ = EnableWindow(GetDlgItem(control_window, id), if (has_app_bar) .TRUE else .FALSE);
         _ = EnableWindow(GetDlgItem(control_window, button_register), if (has_app_bar) .FALSE else .TRUE);
         self.updateStatusText(control_window);
     }
     fn updateStatusText(self: *Application, control_window: windows.HWND) void {
         var text: [512]u8 = undefined;
-        const status = if (self.app_bar) |*app_bar| @tagName(app_bar.status()) else "deinitialized";
-        const registered = if (self.app_bar) |*app_bar| app_bar.isRegistered() else false;
-        const visible = if (self.app_bar) |*app_bar| app_bar.isVisible() else false;
-        const allocated = if (self.app_bar) |*app_bar| app_bar.allocatedRect() else null;
+        const status = if (self.app_bar.status()) |value| @tagName(value) else "deinitialized";
+        const registered = self.app_bar.isRegistered();
+        const visible = self.app_bar.isVisible();
+        const allocated = self.app_bar.allocatedRect();
         const displayed = if (allocated) |rect| std.fmt.bufPrint(&text, "Status: {s}\r\nRegistered: {}\r\nVisible: {}\r\nEdge: {s}\r\nThickness: {} px\r\nMonitor: {}\r\nAllocated rect: ({}, {}, {}, {})\r\nLast result: {s}", .{ status, registered, visible, @tagName(self.selected_edge), self.selected_thickness, self.selected_monitor_index, rect.left, rect.top, rect.right, rect.bottom, self.result[0..self.result_length] }) catch "Status text unavailable" else std.fmt.bufPrint(&text, "Status: {s}\r\nRegistered: {}\r\nVisible: {}\r\nEdge: {s}\r\nThickness: {} px\r\nMonitor: {}\r\nAllocated rect: none\r\nLast result: {s}", .{ status, registered, visible, @tagName(self.selected_edge), self.selected_thickness, self.selected_monitor_index, self.result[0..self.result_length] }) catch "Status text unavailable";
         setWindowTextAscii(self.status_text[0..], displayed);
         _ = SetWindowTextW(GetDlgItem(control_window, status_control), self.status_text[0..].ptr);
@@ -151,7 +153,7 @@ fn run(args: std.process.Args) !void {
         .id => 0,
     }, .selected_edge = config.edge, .selected_thickness = config.thickness };
     application.setResult("Ready");
-    defer application.deinitAppBar();
+    defer application.detachAppBar();
     active_application = &application;
     defer active_application = null;
     application.registerAppBar();
@@ -162,7 +164,7 @@ fn run(args: std.process.Args) !void {
     defer app_window.store(0, .release);
     if (!SetConsoleCtrlHandler(consoleControlHandler, .TRUE).toBool()) return error.ConsoleHandlerRegistrationFailed;
     defer _ = SetConsoleCtrlHandler(consoleControlHandler, .FALSE);
-    if (application.app_bar) |*app_bar| app_bar.show();
+    application.app_bar.show() catch |err| application.setError(err);
     _ = ShowWindow(control_window, SW_SHOW);
     application.updateControls();
     std.debug.print("AppBar control panel is running. Press Ctrl+C to exit.\n", .{});
@@ -195,7 +197,7 @@ fn createControls(parent: windows.HWND, instance: windows.HINSTANCE) Error!void 
     try createButton(parent, instance, "256 px", 248, 248, 108, 30, button_thickness_256);
     try createButton(parent, instance, "320 px", 364, 248, 108, 30, button_thickness_320);
     try createButton(parent, instance, "Reregister", 16, 302, 108, 30, button_reregister);
-    try createButton(parent, instance, "Deinit", 132, 302, 108, 30, button_deinit);
+    try createButton(parent, instance, "Detach", 132, 302, 108, 30, button_detach);
     try createButton(parent, instance, "Register", 248, 302, 108, 30, button_register);
     try createStatic(parent, instance, "State", 16, 350, 80, 20, 0);
     try createStatic(parent, instance, "", 16, 372, 456, 142, status_control);
@@ -238,18 +240,6 @@ fn registerWindowClass(instance: windows.HINSTANCE, class_name: windows.LPCWSTR,
     if (RegisterClassExW(&window_class) == 0) return error.WindowClassRegistrationFailed;
 }
 fn appBarWindowProc(window: windows.HWND, message: windows.UINT, wparam: usize, lparam: isize) callconv(.winapi) isize {
-    if (active_application) |application| if (window == application.app_bar_window) if (application.app_bar) |*app_bar| {
-        const consumed = app_bar.handleMessage(message, wparam, lparam) catch |err| {
-            application.setError(err);
-            application.updateControls();
-            return 0;
-        };
-        if (message == WM_DPICHANGED) {
-            // The AppBar has applied its shell-approved placement; update DPI-dependent resources here.
-            return 0;
-        }
-        if (consumed) return 0;
-    };
     switch (message) {
         WM_CLOSE => {
             _ = DestroyWindow(window);
@@ -283,16 +273,25 @@ fn handleCommand(id: usize) void {
     const application = active_application orelse return;
     switch (id) {
         button_register => application.registerAppBar(),
-        button_deinit => application.deinitAppBar(),
+        button_detach => application.detachAppBar(),
         else => {
-            const app_bar = &(application.app_bar orelse return);
+            if (!application.has_app_bar) return;
+            const app_bar = &application.app_bar;
             switch (id) {
                 button_show => {
-                    app_bar.show();
+                    app_bar.show() catch |err| {
+                        application.setError(err);
+                        application.updateControls();
+                        return;
+                    };
                     application.setResult("Shown");
                 },
                 button_hide => {
-                    app_bar.hide();
+                    app_bar.hide() catch |err| {
+                        application.setError(err);
+                        application.updateControls();
+                        return;
+                    };
                     application.setResult("Hidden");
                 },
                 button_edge_left => setEdge(application, .left),
@@ -307,7 +306,11 @@ fn handleCommand(id: usize) void {
                 button_thickness_320 => setThickness(application, 320),
                 button_refresh => app_bar.refresh() catch |err| application.setError(err),
                 button_unregister => {
-                    app_bar.unregister();
+                    app_bar.unregister() catch |err| {
+                        application.setError(err);
+                        application.updateControls();
+                        return;
+                    };
                     application.setResult("Unregistered");
                 },
                 button_reregister => app_bar.reregister() catch |err| application.setError(err),
@@ -318,7 +321,7 @@ fn handleCommand(id: usize) void {
     }
 }
 fn setEdge(application: *Application, edge: app_bar_lib.Edge) void {
-    const app_bar = &(application.app_bar orelse return);
+    const app_bar = &application.app_bar;
     app_bar.setEdge(edge) catch |err| {
         application.setError(err);
         return;
@@ -333,7 +336,7 @@ fn setMonitor(application: *Application, move_forward: bool) void {
     }
     const current: usize = application.selected_monitor_index;
     const selected: usize = if (move_forward) (current + 1) % application.monitors.len else (current + application.monitors.len - 1) % application.monitors.len;
-    const app_bar = &(application.app_bar orelse return);
+    const app_bar = &application.app_bar;
     app_bar.setMonitor(.{ .index = @intCast(selected) }) catch |err| {
         application.setError(err);
         return;
@@ -342,7 +345,7 @@ fn setMonitor(application: *Application, move_forward: bool) void {
     application.setResult("Monitor updated");
 }
 fn setThickness(application: *Application, thickness: u32) void {
-    const app_bar = &(application.app_bar orelse return);
+    const app_bar = &application.app_bar;
     app_bar.setThickness(thickness) catch |err| {
         application.setError(err);
         return;

@@ -102,4 +102,8 @@ pub const Error = error{
     WindowZOrderFailed,
     AppBarDeinitialized,
     ConfigurationRollbackFailed,
+    WindowSubclassInstallationFailed,
+    AppBarBindingAlreadyAttached,
+    AppBarBindingNotAttached,
+    AppBarWindowDestroyed,
 };

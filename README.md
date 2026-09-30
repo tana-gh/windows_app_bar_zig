@@ -47,29 +47,29 @@ zig build example-basic -- 0 right 320
 
 The edge must be `left`, `top`, `right`, or `bottom`. The example opens a separate control panel that can show or hide the AppBar, change its edge, monitor, and thickness, refresh it, unregister or reregister it, and deinitialize or register it again. The panel displays the current lifecycle, visibility, placement, and the most recent operation result. Press Ctrl+C in the terminal to remove the AppBar and exit the example.
 
-The library uses Zig declarations for the small Win32 surface it needs. They are verified against the Windows SDK and link to `Shell32.lib` and `User32.lib`; consumers do not need to configure C header imports.
+The library uses Zig declarations for the small Win32 surface it needs. They are verified against the Windows SDK and link to `Shell32.lib`, `User32.lib`, and `Comctl32.lib`; consumers do not need to configure C header imports.
 
 The intended usage is:
 
 ```zig
-var app_bar = try AppBar.register(hwnd, .{
+var app_bar = AppBarBinding{};
+try app_bar.attach(hwnd, .{
     .monitor = .{ .index = monitor_index },
     .edge = .right,
     .thickness = thickness,
 });
-defer app_bar.deinit();
+defer app_bar.detach();
 
 try app_bar.setMonitor(.{ .index = other_monitor_index });
-
-// In the window procedure:
-const consumed = app_bar.handleMessage(message, wparam, lparam) catch {
-    // handle errors
-}
-if (message == WM_DPICHANGED) {
-    // Update DPI-dependent application resources here.
-    return 0;
-}
-if (consumed) {
-    return 0;
-}
 ```
+
+`AppBarBinding` installs a window subclass and processes AppBar messages without changes to the
+window's existing window procedure. Messages that are not consumed by the AppBar are forwarded to
+that procedure. The binding must remain at a stable memory address until `detach()` is called.
+Call `attach()` and `detach()` from the thread that created the target window. When that window is
+destroyed, the binding automatically removes its AppBar registration before forwarding
+`WM_DESTROY` to the existing window procedure.
+Call `lastError()` to retrieve an error raised while handling a window message.
+
+`AppBar` remains public as a low-level API for applications that need to integrate AppBar handling
+into their own window procedure. New applications should normally use `AppBarBinding`.

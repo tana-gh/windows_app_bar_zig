@@ -9,6 +9,14 @@ pub const RECT = extern struct {
 };
 
 pub const HMONITOR = *opaque {};
+pub const SUBCLASSPROC = *const fn (
+    window: windows.HWND,
+    message: windows.UINT,
+    wparam: usize,
+    lparam: windows.LPARAM,
+    subclass_id: usize,
+    reference_data: usize,
+) callconv(.winapi) isize;
 pub const MONITORENUMPROC = *const fn (
     monitor: HMONITOR,
     hdc: ?std.os.windows.HDC,
@@ -76,9 +84,11 @@ pub const HWND_TOPMOST: windows.HWND = @ptrFromInt(std.math.maxInt(usize));
 pub const WA_INACTIVE: usize = 0;
 
 pub const WM_ACTIVATE: windows.UINT = 0x0006;
+pub const WM_DESTROY: windows.UINT = 0x0002;
 pub const WM_WINDOWPOSCHANGED: windows.UINT = 0x0047;
 pub const WM_DISPLAYCHANGE: windows.UINT = 0x007E;
 pub const WM_DPICHANGED: windows.UINT = 0x02E0;
+pub const WM_NCDESTROY: windows.UINT = 0x0082;
 
 pub const EDD_GET_DEVICE_INTERFACE_NAME: windows.DWORD = 0x00000001;
 
@@ -128,6 +138,26 @@ pub extern "user32" fn ShowWindow(
     window: windows.HWND,
     command: i32,
 ) callconv(.winapi) windows.BOOL;
+
+pub extern "comctl32" fn SetWindowSubclass(
+    window: windows.HWND,
+    subclass_proc: SUBCLASSPROC,
+    subclass_id: usize,
+    reference_data: usize,
+) callconv(.winapi) windows.BOOL;
+
+pub extern "comctl32" fn RemoveWindowSubclass(
+    window: windows.HWND,
+    subclass_proc: SUBCLASSPROC,
+    subclass_id: usize,
+) callconv(.winapi) windows.BOOL;
+
+pub extern "comctl32" fn DefSubclassProc(
+    window: windows.HWND,
+    message: windows.UINT,
+    wparam: usize,
+    lparam: windows.LPARAM,
+) callconv(.winapi) isize;
 
 test "APPBARDATA ABI matches the Windows SDK" {
     const expected_pointer_offset = @sizeOf(usize);
